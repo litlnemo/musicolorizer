@@ -1,0 +1,6 @@
+librosa
+numpy
+random
+os
+pygame
+pytest
