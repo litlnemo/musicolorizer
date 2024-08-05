@@ -13,8 +13,6 @@ from os import environ
 environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame
 
-# Set ffmpeg backend
-environ["AUDIOTYPE"] = "ffmpeg"
 n_fft = 2048 * 4
 hop_length = 512
 
@@ -40,7 +38,7 @@ def get_colorway(title, colormap):
             return colors
 
     # Random colorway if no keywords match
-    return [random_color(), random_color()]  
+    return [random_color(), random_color()]
 
 def random_color():
     return (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
@@ -87,10 +85,10 @@ def main():
     stft = np.abs(librosa.stft(time_series, hop_length=512, n_fft=n_fft))
     global spectrogram
     spectrogram = librosa.amplitude_to_db(stft, ref=np.max)
-    frequencies = librosa.core.fft_frequencies(n_fft=n_fft)
+    frequencies = librosa.mel_frequencies()
 
     # Time and frequency indexes
-    times = librosa.core.frames_to_time(np.arange(spectrogram.shape[1]), sr=sample_rate, hop_length=512, n_fft=n_fft)
+    times = librosa.frames_to_time(np.arange(spectrogram.shape[1]), sr=sample_rate, hop_length=512, n_fft=n_fft)
     global time_index_ratio, frequencies_index_ratio
     time_index_ratio = len(times) / times[len(times) - 1]
     frequencies_index_ratio = len(frequencies) / frequencies[len(frequencies) - 1]
@@ -101,7 +99,7 @@ def main():
     # Define screen size
     info = pygame.display.Info()
     screen_size = int(info.current_w / 2)
-    screen_height = info.current_h - 100 
+    screen_height = info.current_h - 100
     screen = pygame.display.set_mode([screen_size, screen_height])
     pygame.display.set_caption("Musicolorizer")
 
@@ -109,7 +107,7 @@ def main():
     bars = []
     frequencies = np.arange(100, 5000, 100)
     r = len(frequencies)
-    width_of_bar = int(screen_size / r)   
+    width_of_bar = int(screen_size / r)
     x = int((screen_size - width_of_bar * r) / 2)
 
     for c in frequencies:
