@@ -94,7 +94,7 @@ These are used to figure out how to use pygame and librosa, and to explain many 
 - [https://librosa.org/doc/latest/](url)
 - [https://www.reddit.com/r/VideoEditing/comments/ssci0l/comment/hwxw2fd/](url)
 - [https://medium.com/@chaosqueenbee/audio-visualizer-6571b9085f0e](url) -- the most helpful -- clear explanations and her visualizer inspired the look of mine. I did use code snippets from her work.
-- [https://khareanu1612.medium.com/audio-signal-processing-with-spectrograms-and-librosa-b66a0a6bc5cc]
+- [https://khareanu1612.medium.com/audio-signal-processing-with-spectrograms-and-librosa-b66a0a6bc5cc](url)
 
 ## Footnotes
 [^1]: [https://librosa.org/doc/main/glossary.html]
