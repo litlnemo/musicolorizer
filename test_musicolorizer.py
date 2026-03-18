@@ -1,8 +1,8 @@
 import pytest
-from project import get_colorway
-from project import random_color
-from project import limitation
-from project import get_title_from_path
+from musicolorizer import get_colorway
+from musicolorizer import random_color
+from musicolorizer import limitation
+from musicolorizer import get_title_from_path
 
 def test_get_title_from_path():
     assert get_title_from_path("/Users/litlnemo/Music/Almost Blue.mp3") == "Almost Blue"
