@@ -3,22 +3,24 @@ from musicolorizer import get_colorway
 from musicolorizer import random_color
 from musicolorizer import limitation
 from musicolorizer import get_title_from_path
+from musicolorizer import pick_color_for_bar
+from colormap import colormap
 
 def test_get_title_from_path():
     assert get_title_from_path("/Users/litlnemo/Music/Almost Blue.mp3") == "Almost Blue"
     assert get_title_from_path("/some/path/Happy Days.wav") == "Happy Days"
 
-colormap = {
-    'blue': [(0, 0, 50), (0, 0, 255)],  # Blues
-    'sad': [(0, 0, 0), (0, 0, 255)],
-    'winter': [(0, 0, 0), (0, 0, 255)],
-    'happy': [(10, 10, 0), (255, 255, 0)],  # Yellows
-    'love': [(10, 0, 0), (255, 105, 180)],  # Pinks
-    'red': [(0, 0, 0), (255, 0, 0)],  # Reds
-    'green': [(0, 10, 0), (0, 255, 0)],  # Lime Green
-    'spring': [(10, 10, 0), (100, 255, 0)],
-    'daydreams': [(0, 0, 0), (200, 80, 255)],  # Magenta
-}
+def test_new_colormap_keywords():
+    assert get_colorway("Gold Dust", colormap) == [[(50, 40, 0), (255, 215, 0)]]
+    assert get_colorway("Electric Feel", colormap) == [[(0, 5, 30), (80, 240, 255)]]
+    assert get_colorway("Night Moves", colormap) == [[(5, 5, 20), (40, 20, 80)]]
+    assert get_colorway("Ghost Town", colormap) == [[(10, 20, 20), (200, 220, 215)]]
+
+def test_pick_color_for_bar():
+    colorways = [[(0, 0, 50), (0, 0, 255)], [(10, 0, 0), (255, 105, 180)]]
+    result = pick_color_for_bar(colorways)
+    assert result in colorways
+
 
 def main():
     test_get_title_from_path()
