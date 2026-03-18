@@ -10,6 +10,8 @@ import librosa
 import os
 import numpy as np
 import random
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="pygame")
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame
 
@@ -98,25 +100,67 @@ def random_color():
 
 class ColorBar:
     # Defining vertical bars in visualizer
-    def __init__(self, x, y, freq, colorway, width=50, min_height=10, max_height=1000, min_decibel=-80, max_decibel=0):
+    def __init__(self, x, y, freq, colorway, shape='rectangle', width=50, min_height=10, max_height=1000, min_decibel=-80, max_decibel=0):
         self.x, self.y, self.freq = x, y, freq
         self.colorway = colorway  # Store the colorway
+        self.shape = shape # store the shape
         self.width, self.min_height, self.max_height = width, min_height, max_height
         self.height = min_height
         self.min_decibel, self.max_decibel = min_decibel, max_decibel
 
     def update(self, decibel):
-        # Static height
-        self.height = self.max_height
-
-        # Gradient effect based on decibel
-        gradient_start = np.array(self.colorway[0])  # Start color
-        gradient_end = np.array(self.colorway[1])    # End color
+        if self.shape == 'rounded':
+            # Variable height based on decibel level
+            height_ratio = limitation(0, 1, (decibel - self.min_decibel) / (self.max_decibel - self.min_decibel))
+            self.height = int(self.min_height + height_ratio * (self.max_height - self.min_height))
+        else:
+            # Static height for all other shapes
+            self.height = self.max_height
+        # Gradient effect based on decibel (runs for all shapes)
+        gradient_start = np.array(self.colorway[0])
+        gradient_end = np.array(self.colorway[1])
         gradient_ratio = limitation(0, 1, (decibel - self.min_decibel) / (self.max_decibel - self.min_decibel))
         self.color = tuple((1 - gradient_ratio) * gradient_start + gradient_ratio * gradient_end)
 
     def render(self, screen):
-        pygame.draw.rect(screen, self.color, (self.x, screen.get_height() - self.height, self.width, self.height))
+        if self.shape == 'rectangle':
+            pygame.draw.rect(screen, self.color, (self.x, screen.get_height() - self.height, self.width, self.height))
+        elif self.shape == 'rounded':
+            pygame.draw.rect(screen, self.color, (self.x, screen.get_height() - self.height, self.width, self.height), border_radius=self.width // 2)
+        elif self.shape == 'triangle':
+            top_x = self.x + self.width // 2
+            top_y = screen.get_height() - self.height
+            bottom_left = (self.x, screen.get_height())
+            bottom_right = (self.x + self.width, screen.get_height())
+            top = (top_x, top_y)
+            pygame.draw.polygon(screen, self.color, [bottom_left, bottom_right, top])
+        elif self.shape == 'tapered':
+            narrow_width = self.width // 3
+            offset = (self.width - narrow_width) // 2
+            bottom_left = (self.x + offset, screen.get_height())
+            bottom_right = (self.x + offset + narrow_width, screen.get_height())
+            top_left = (self.x, screen.get_height() - self.height)
+            top_right = (self.x + self.width, screen.get_height() - self.height)
+            pygame.draw.polygon(screen, self.color, [bottom_left, bottom_right, top_right, top_left])
+        elif self.shape == 'wavy':
+            points = []
+            segments = 8  # number of segments along the height
+            segment_height = self.height // segments
+            wobble = self.width // 4  # how much the edges can wobble
+
+            # Build left edge going upward
+            for i in range(segments + 1):
+                y = screen.get_height() - (i * segment_height)
+                x = self.x + random.randint(-wobble, wobble)
+                points.append((x, y))
+
+            # Build right edge going downward
+            for i in range(segments, -1, -1):
+                y = screen.get_height() - (i * segment_height)
+                x = self.x + self.width + random.randint(-wobble, wobble)
+                points.append((x, y))
+
+            pygame.draw.polygon(screen, self.color, points)
 
 def limitation(min_value, max_value, value):
     return max(min_value, min(max_value, value))
@@ -155,6 +199,10 @@ def main():
     screen = pygame.display.set_mode([screen_size, screen_height])
     pygame.display.set_caption("Musicolorizer")
 
+    SHAPES = ['rectangle', 'rounded', 'triangle', 'tapered', 'wavy']
+    # SHAPES = ['tapered', 'rounded']
+    shape = random.choice(SHAPES)
+
     # Create color bars
     bars = []
     frequencies = np.arange(100, 5000, 100)
@@ -163,7 +211,7 @@ def main():
     x = int((screen_size - width_of_bar * r) / 2)
 
     for c in frequencies:
-        bars.append(ColorBar(x, screen_height, c, pick_color_for_bar(colorway), max_height=screen_height, width=width_of_bar))
+        bars.append(ColorBar(x, screen_height, c, pick_color_for_bar(colorway), shape=shape, max_height=screen_height, width=width_of_bar))
         x += width_of_bar
 
     # Load and play
