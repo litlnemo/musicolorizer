@@ -10,6 +10,7 @@ import librosa
 import os
 import numpy as np
 import random
+import sys
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pygame")
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
@@ -152,6 +153,8 @@ SONG_END = pygame.USEREVENT + 1
 # What happened to a song: it played to the end, the user skipped it,
 # the user quit, or it couldn't be loaded at all
 ENDED, NEXT, QUIT, UNPLAYABLE = 'ended', 'next', 'quit', 'unplayable'
+# Pausing doesn't end a song; play_song handles it and keeps going
+PAUSE = 'pause'
 
 
 def clean_path(path):
@@ -191,8 +194,250 @@ def build_playlist(user_input):
     return [path for path in (clean_path(part) for part in user_input.split(',')) if path]
 
 
-def next_action(event):
-    """Decide what an event means for playback: QUIT, NEXT, ENDED, or None (keep playing)."""
+def playlist_from_paths(paths):
+    """Turn a list of chosen or typed paths into one playlist.
+    Each path goes through build_playlist, so a folder plays every song in it
+    (alphabetically) and a file plays as itself."""
+    playlist = []
+    for path in paths:
+        playlist.extend(build_playlist(path))
+    return playlist
+
+
+def existing_songs(playlist):
+    """Return the songs that exist, printing a message for each one that doesn't."""
+    found = []
+    for songfile in playlist:
+        if os.path.isfile(songfile):
+            found.append(songfile)
+        else:
+            print(f"Can't find {songfile}. Skipping it.")
+    return found
+
+
+# ---------- Song chooser ----------
+
+AUDIO_FILETYPES = [("Audio files", "*.mp3 *.wav *.flac"), ("All files", "*")]
+
+
+def native_dialogs():
+    """Return (ask_files, ask_folder) functions that open the system's file dialogs.
+    Raises ImportError if tkinter isn't available."""
+    import tkinter
+    from tkinter import filedialog
+
+    def with_hidden_root(show_dialog):
+        root = tkinter.Tk()
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)  # keep the dialog in front of the terminal
+        except tkinter.TclError:
+            pass
+        try:
+            return show_dialog(root)
+        finally:
+            root.destroy()
+
+    def ask_files():
+        return with_hidden_root(lambda root: filedialog.askopenfilenames(
+            parent=root, title="Musicolorizer: choose songs",
+            message="Choose one or more songs (or Cancel to choose a whole folder instead)",
+            filetypes=AUDIO_FILETYPES))
+
+    def ask_folder():
+        return with_hidden_root(lambda root: filedialog.askdirectory(
+            parent=root, title="Musicolorizer: choose a folder",
+            message="Choose a folder to play every song in it (or Cancel to quit)",
+            mustexist=True))
+
+    return ask_files, ask_folder
+
+
+def choose_songs(ask_files=None, ask_folder=None):
+    """Ask the user for songs: one or more files first, then (if they cancel) a folder.
+    Returns a list of chosen paths, or [] if they cancelled both.
+    ask_files/ask_folder can be swapped out (the tests use fakes so no dialog opens)."""
+    if ask_files is None or ask_folder is None:
+        ask_files, ask_folder = native_dialogs()
+    files = ask_files()
+    if files:
+        return list(files)
+    folder = ask_folder()
+    return [folder] if folder else []
+
+
+def ask_for_songs():
+    """Open the song chooser, falling back to the old typed prompt if no dialog can be shown."""
+    try:
+        return choose_songs()
+    except Exception as error:  # tkinter missing, or no display for it
+        print(f"Couldn't open the song chooser ({error}).")
+        print("Tip: you can also run  python musicolorizer.py <song, songs, or folder>")
+        typed = input("Choose a song: ")
+        return [typed] if typed.strip() else []
+
+
+# ---------- Playback state ----------
+
+class PlaybackState:
+    """What the playlist panel shows: the songs, which one is current, which couldn't play, and whether it's paused."""
+
+    def __init__(self, songs):
+        self.songs = list(songs)
+        self.index = 0
+        self.paused = False
+        self.unplayable = set()
+
+    def start(self, index):
+        """Make the song at index the current song. A new song always starts unpaused."""
+        self.index = index
+        self.paused = False
+
+    def mark_unplayable(self, index):
+        self.unplayable.add(index)
+
+    def toggle_pause(self):
+        """Flip between paused and playing. Returns True if now paused."""
+        self.paused = not self.paused
+        return self.paused
+
+    @property
+    def current_song(self):
+        return self.songs[self.index] if self.songs else None
+
+    @property
+    def titles(self):
+        return [get_title_from_path(song) for song in self.songs]
+
+
+# The playlist being played by run_playlist, so play_song can show it
+now_playing = None
+
+
+def visible_range(index, total, rows):
+    """Which slice of a long playlist to show: keep the current song near the top, with a couple of earlier songs above it."""
+    if total <= rows:
+        return 0, total
+    start = max(0, min(index - 2, total - rows))
+    return start, start + rows
+
+
+# ---------- On-screen controls ----------
+
+PANEL_MARGIN = 12
+PANEL_PADDING = 10
+BUTTON_HEIGHT = 34
+BUTTON_GAP = 8
+ROW_HEIGHT = 24
+MAX_ROWS = 8
+
+
+def panel_width(screen_size):
+    return max(60, min(380, screen_size[0] - 2 * PANEL_MARGIN))
+
+
+def control_layout(screen_size):
+    """Where the Pause, Skip and Quit buttons go, as {action: pygame.Rect}."""
+    inner = panel_width(screen_size) - 2 * PANEL_PADDING
+    button_width = max(1, (inner - 2 * BUTTON_GAP) // 3)
+    x = PANEL_MARGIN + PANEL_PADDING
+    y = PANEL_MARGIN + PANEL_PADDING
+    rects = {}
+    for action in (PAUSE, NEXT, QUIT):
+        rects[action] = pygame.Rect(x, y, button_width, BUTTON_HEIGHT)
+        x += button_width + BUTTON_GAP
+    return rects
+
+
+def load_fonts():
+    """Fonts for the panel, or None if pygame can't draw text."""
+    try:
+        return {"button": pygame.font.Font(None, 24), "row": pygame.font.Font(None, 24), "header": pygame.font.Font(None, 22)}
+    except pygame.error:
+        return None
+
+
+def fit_text(font, text, max_width):
+    """Shorten text with '...' until it fits in max_width pixels."""
+    if font.size(text)[0] <= max_width:
+        return text
+    while len(text) > 1 and font.size(text + "...")[0] > max_width:
+        text = text[:-1]
+    return text.rstrip() + "..."
+
+
+def draw_text(screen, fonts, kind, text, color, x, y, max_width, center_in=None):
+    if not fonts:
+        return
+    font = fonts[kind]
+    image = font.render(fit_text(font, text, max_width), True, color)
+    if center_in:
+        screen.blit(image, image.get_rect(center=center_in.center))
+    else:
+        screen.blit(image, (x, y + (ROW_HEIGHT - image.get_height()) // 2))
+
+
+def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
+    """Draw the playlist panel and control buttons over the bars. Returns the button rects."""
+    buttons = control_layout(screen.get_size())
+    width = panel_width(screen.get_size())
+    start, end = visible_range(state.index, len(state.songs), MAX_ROWS)
+    more = len(state.songs) - end
+    rows = (end - start) + (1 if more else 0)
+    height = 2 * PANEL_PADDING + BUTTON_HEIGHT + 8 + ROW_HEIGHT + rows * ROW_HEIGHT
+
+    # Translucent background so the bars show through
+    panel = pygame.Surface((width, height), pygame.SRCALPHA)
+    panel.fill((0, 0, 0, 170))
+    screen.blit(panel, (PANEL_MARGIN, PANEL_MARGIN))
+
+    # Buttons
+    labels = {PAUSE: "Resume (P)" if state.paused else "Pause (P)", NEXT: "Skip (N)", QUIT: "Quit (Q)"}
+    for action, rect in buttons.items():
+        if action == PAUSE and state.paused:
+            fill = (70, 110, 190)
+        elif rect.collidepoint(mouse_pos):
+            fill = (95, 95, 95)
+        else:
+            fill = (55, 55, 55)
+        pygame.draw.rect(screen, fill, rect, border_radius=6)
+        pygame.draw.rect(screen, (150, 150, 150), rect, width=1, border_radius=6)
+        draw_text(screen, fonts, "button", labels[action], (235, 235, 235), 0, 0, rect.width - 8, center_in=rect)
+
+    # Playlist header and rows
+    x = PANEL_MARGIN + PANEL_PADDING
+    text_width = width - 2 * PANEL_PADDING - 18
+    y = PANEL_MARGIN + PANEL_PADDING + BUTTON_HEIGHT + 8
+    header = f"Playlist: {state.index + 1} of {len(state.songs)}" + ("   PAUSED" if state.paused else "")
+    draw_text(screen, fonts, "header", header, (160, 160, 160), x, y, width - 2 * PANEL_PADDING)
+    y += ROW_HEIGHT
+
+    titles = state.titles
+    for i in range(start, end):
+        if i == state.index:
+            pygame.draw.rect(screen, (60, 60, 75), (x - 4, y + 1, width - 2 * PANEL_PADDING + 8, ROW_HEIGHT - 2), border_radius=4)
+            # A small "playing" triangle in front of the current song
+            cy = y + ROW_HEIGHT // 2
+            pygame.draw.polygon(screen, (255, 255, 255), [(x, cy - 6), (x, cy + 6), (x + 10, cy)])
+            color = (255, 255, 255)
+        elif i in state.unplayable:
+            color = (110, 110, 110)
+        else:
+            color = (190, 190, 190)
+        label = f"{i + 1}. {titles[i]}" + ("  (can't play)" if i in state.unplayable else "")
+        draw_text(screen, fonts, "row", label, color, x + 18, y, text_width)
+        y += ROW_HEIGHT
+    if more:
+        draw_text(screen, fonts, "row", f"... {more} more", (130, 130, 130), x + 18, y, text_width)
+
+    return buttons
+
+
+# ---------- Playback ----------
+
+def next_action(event, buttons=None):
+    """Decide what an event means for playback: QUIT, NEXT, PAUSE, ENDED, or None (keep playing).
+    buttons is the {action: rect} map from control_layout, for mouse clicks."""
     if event.type == pygame.QUIT:
         return QUIT
     if event.type == SONG_END:
@@ -202,6 +447,12 @@ def next_action(event):
             return QUIT
         if event.key in (pygame.K_n, pygame.K_RIGHT):
             return NEXT
+        if event.key == pygame.K_p:
+            return PAUSE
+    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and buttons:
+        for action, rect in buttons.items():
+            if rect.collidepoint(event.pos):
+                return action
     return None
 
 
@@ -373,6 +624,9 @@ def play_song(screen, songfile):
         print(f"Can't find {songfile}. Skipping it.")
         return UNPLAYABLE
 
+    # Show the playlist being played, or just this song if play_song was called on its own
+    state = now_playing if now_playing is not None and now_playing.current_song == songfile else PlaybackState([songfile])
+
     # Each song gets its own title-based colorway and shape (random shape if no keyword matches)
     title = get_title_from_path(songfile)
     colorway = get_colorway(title, colormap)
@@ -398,55 +652,80 @@ def play_song(screen, songfile):
     pygame.display.set_caption(f"Musicolorizer — {display}")
     title_image = make_title_image(display, screen.get_width() - 2 * TITLE_MARGIN)
 
+    fonts = load_fonts()
+    buttons = control_layout(screen.get_size())
+    # Bars are drawn on their own layer, so while paused the last frame can be shown again unchanged
+    bar_layer = pygame.Surface(screen.get_size())
+    clock = pygame.time.Clock()
+
     # Run until the song ends, the user skips, or the user quits
     while True:
         for event in pygame.event.get():
-            action = next_action(event)
-            if action:
+            action = next_action(event, buttons)
+            if action == PAUSE:
+                if state.toggle_pause():
+                    pygame.mixer.music.pause()
+                else:
+                    pygame.mixer.music.unpause()
+            elif action:
                 pygame.mixer.music.stop()
                 pygame.event.clear(SONG_END)  # stopping can post an end event; don't let it skip the next song
+                state.paused = False
                 return action
 
-        screen.fill((0, 0, 0))
+        # While paused, the music position stops too, so the bars hold still and pick up in sync on resume
+        if not state.paused:
+            bar_layer.fill((0, 0, 0))
+            for b in bars:
+                b.update(get_decibel(pygame.mixer.music.get_pos() / 1000.0, b.freq))
+                b.render(bar_layer)
 
-        for b in bars:
-            b.update(get_decibel(pygame.mixer.music.get_pos() / 1000.0, b.freq))
-            b.render(screen)
-
-        # The corner text goes on top of the bars. Its timer is the song's play position,
-        # so it starts over for each song and doesn't advance if playback is paused.
+        screen.blit(bar_layer, (0, 0))
+        draw_overlay(screen, state, fonts, pygame.mouse.get_pos())
+        # The corner text goes on the screen (not the bar layer), on top of the bars and panel.
+        # Its timer is the song's play position, so it starts over for each song and holds while paused.
         draw_title(screen, title_image, title_alpha(max(0, pygame.mixer.music.get_pos()) / 1000.0))
 
         pygame.display.flip()
+        clock.tick(60)
 
 
 def run_playlist(screen, playlist):
     """Play each song in order. Returns how many songs actually played."""
+    global now_playing
+    now_playing = PlaybackState(playlist)
     played = 0
-    for songfile in playlist:
-        result = play_song(screen, songfile)
-        if result == UNPLAYABLE:
-            continue
-        played += 1
-        if result == QUIT:
-            break
+    try:
+        for index, songfile in enumerate(playlist):
+            now_playing.start(index)
+            result = play_song(screen, songfile)
+            if result == UNPLAYABLE:
+                now_playing.mark_unplayable(index)
+                continue
+            played += 1
+            if result == QUIT:
+                break
+    finally:
+        now_playing = None
     return played
 
 
-def main():
-    # Get a song, several comma-separated songs, or a folder
-    playlist = build_playlist(input("Choose a song: "))
-    if not playlist:
-        print("No songs to play. Enter an audio file, several files separated by commas, or a folder.")
-        return
+def main(argv=None):
+    # Songs from the command line, or from the song chooser if none were given
+    args = sys.argv[1:] if argv is None else argv
+    if args:
+        playlist = playlist_from_paths(args)
+        if not playlist:
+            print("No songs to play. Give an audio file, several files, or a folder.")
+            return
+    else:
+        playlist = playlist_from_paths(ask_for_songs())
+        if not playlist:
+            print("No songs chosen, so there's nothing to play.")
+            return
 
     # Report missing files up front, and don't open a window if nothing is left
-    found = []
-    for songfile in playlist:
-        if os.path.isfile(songfile):
-            found.append(songfile)
-        else:
-            print(f"Can't find {songfile}. Skipping it.")
+    found = existing_songs(playlist)
     if not found:
         print("None of those songs could be found, so there's nothing to play.")
         return

@@ -8,6 +8,27 @@ A music visualizer that chooses colors based on words in each song's title, so t
 
 This is based on my final project for CS50Python through HarvardX in 2024. That was a rudimentary version of the Musicolorizer, but this repo contains the ongoing project I am working on improving.
 
+## Running it
+Run `python musicolorizer.py` and a file chooser opens. Pick one song or several, or press Cancel to pick a folder instead (every .mp3, .wav and .flac file in it plays, in alphabetical order). Cancelling both quits.
+
+You can also skip the chooser by listing songs or a folder on the command line:
+
+```
+python musicolorizer.py "Almost Blue.mp3"
+python musicolorizer.py song1.mp3 song2.wav
+python musicolorizer.py ~/Music/Playlist
+```
+
+While music plays, the window shows the playlist with the current song highlighted. Use the buttons or the keyboard:
+
+| Action | Button | Keys |
+| --- | --- | --- |
+| Pause / resume | Pause / Resume | P |
+| Skip to the next song | Skip | N or Right Arrow |
+| Quit | Quit | Q, Esc, or close the window |
+
+The chooser uses tkinter, which comes with most Python installs. On a Homebrew Python on macOS you may need `brew install python-tk`. Without it, the app falls back to typing a path at a prompt.
+
 ## Project overview
 This project is the beginning of (I hope!) a larger project for a context-aware music visualizer. Over the years, I've enjoyed using music visualizers built into software such as iTunes, but they've always been lacking something. A sad, mournful song might be visualized with happy, upbeat colors. A song with "blue" in the title might be visualized in red. It kind of drives me crazy. If a human was actively controlling the animation, they'd probably choose colors and shapes that work well with the music, but none of the visualizers I've used have had that capability.
 
