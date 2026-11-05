@@ -14,10 +14,20 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pygame")
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame
+import mutagen
 from colormap import colormap, shapemap
 
 n_fft = 2048 * 4
 hop_length = 512
+
+# How the "Artist — Title" text in the bottom-left corner behaves:
+#   'always' - visible for the whole song
+#   'fade'   - shown at the start of the song, then fades out for good
+#   'cycle'  - shown at the start, fades out, then comes back now and then
+TITLE_MODE = 'cycle'
+TITLE_SHOW_SECONDS = 5     # how long the text stays at full strength
+TITLE_FADE_SECONDS = 1     # how long each fade out (or back in) takes
+TITLE_HIDDEN_SECONDS = 20  # in 'cycle' mode, how long it stays hidden between appearances
 
 # colormap was here
 
@@ -249,6 +259,113 @@ def show_loading(screen, title):
     pygame.event.pump()
 
 
+# ---------- Now playing: artist and title in the corner ----------
+
+TITLE_MODES = ('always', 'fade', 'cycle')
+
+
+def tag_text(tags, keys):
+    """The first non-empty text found under any of the keys, or None.
+    Handles both mutagen's simple tags (a list of strings) and raw ID3 frames (which have .text)."""
+    for key in keys:
+        value = tags.get(key)
+        if value is None:
+            continue
+        if hasattr(value, 'text'):
+            value = value.text
+        if isinstance(value, str):
+            value = [value]
+        parts = [str(part).strip() for part in value if str(part).strip()]
+        if parts:
+            return ", ".join(parts)
+    return None
+
+
+def read_tags(songfile):
+    """Return (artist, title) from the file's tags. Either is None if missing or unreadable."""
+    try:
+        audio = mutagen.File(songfile, easy=True)
+    except Exception:
+        return None, None
+    if audio is None or not audio.tags:
+        return None, None
+    # MP3 and FLAC give simple 'artist'/'title' keys; WAV gives raw ID3 frames (TPE1/TIT2)
+    artist = tag_text(audio.tags, ('artist', 'TPE1'))
+    title = tag_text(audio.tags, ('title', 'TIT2'))
+    return artist, title
+
+
+def get_display_info(songfile):
+    """The text to show for a song: "Artist — Title" if there's an artist tag, otherwise just the title.
+    The title comes from the tags if present, else from the filename (as before)."""
+    artist, title = read_tags(songfile)
+    title = title or get_title_from_path(songfile)
+    return f"{artist} — {title}" if artist else title
+
+
+def title_alpha(elapsed, mode=None):
+    """How visible the corner text is (0.0 hidden to 1.0 full) at a given number of seconds into the song."""
+    mode = TITLE_MODE if mode is None else mode
+    if mode not in TITLE_MODES:
+        raise ValueError(f"TITLE_MODE must be one of {TITLE_MODES}, not {mode!r}")
+    if mode == 'always':
+        return 1.0
+
+    show, fade, hidden = TITLE_SHOW_SECONDS, TITLE_FADE_SECONDS, TITLE_HIDDEN_SECONDS
+    t = max(0.0, elapsed)
+    if mode == 'cycle':
+        # One cycle: show, fade out, hidden, fade back in; then it repeats
+        t %= show + fade + hidden + fade
+        if t >= show + fade + hidden:
+            return (t - show - fade - hidden) / fade  # fading back in
+    if t < show:
+        return 1.0
+    if t < show + fade:
+        return 1.0 - (t - show) / fade  # fading out
+    return 0.0
+
+
+def shorten_to_width(font, text, max_width):
+    """Cut text down with '...' until it fits in max_width pixels."""
+    if font.size(text)[0] <= max_width:
+        return text
+    while len(text) > 1 and font.size(text + "...")[0] > max_width:
+        text = text[:-1]
+    return text.rstrip() + "..."
+
+
+TITLE_MARGIN = 16
+TITLE_OUTLINE = 2
+
+
+def make_title_image(text, max_width):
+    """Render the corner text once per song: light text with a dark outline so it reads over any bars.
+    Returns None if pygame can't draw text."""
+    try:
+        font = pygame.font.Font(None, 36)
+    except pygame.error:
+        return None
+    text = shorten_to_width(font, text, max(1, max_width - 2 * TITLE_OUTLINE))
+    light = font.render(text, True, (235, 235, 235))
+    dark = font.render(text, True, (0, 0, 0))
+    o = TITLE_OUTLINE
+    image = pygame.Surface((light.get_width() + 2 * o, light.get_height() + 2 * o), pygame.SRCALPHA)
+    for dx in (-o, 0, o):
+        for dy in (-o, 0, o):
+            if dx or dy:
+                image.blit(dark, (o + dx, o + dy))
+    image.blit(light, (o, o))
+    return image
+
+
+def draw_title(screen, image, alpha):
+    """Draw the corner text in the bottom-left corner at the given strength (0.0-1.0)."""
+    if image is None or alpha <= 0:
+        return
+    image.set_alpha(int(round(255 * min(1.0, alpha))))
+    screen.blit(image, (TITLE_MARGIN, screen.get_height() - image.get_height() - TITLE_MARGIN))
+
+
 def play_song(screen, songfile):
     """Analyze and visualize one song until it ends, is skipped, or the user quits.
     Returns ENDED, NEXT, QUIT, or UNPLAYABLE."""
@@ -260,6 +377,9 @@ def play_song(screen, songfile):
     title = get_title_from_path(songfile)
     colorway = get_colorway(title, colormap)
     shape = get_shape(title)
+    # What's shown in the corner and the caption (artist/title tags if the file has them);
+    # colors and shape above still come from the filename title
+    display = get_display_info(songfile)
 
     show_loading(screen, title)
     if not analyze_song(songfile):
@@ -275,7 +395,8 @@ def play_song(screen, songfile):
         return UNPLAYABLE
     pygame.event.clear(SONG_END)  # drop any end event left over from the previous song
     pygame.mixer.music.play(0)
-    pygame.display.set_caption(f"Musicolorizer — {title}")
+    pygame.display.set_caption(f"Musicolorizer — {display}")
+    title_image = make_title_image(display, screen.get_width() - 2 * TITLE_MARGIN)
 
     # Run until the song ends, the user skips, or the user quits
     while True:
@@ -291,6 +412,10 @@ def play_song(screen, songfile):
         for b in bars:
             b.update(get_decibel(pygame.mixer.music.get_pos() / 1000.0, b.freq))
             b.render(screen)
+
+        # The corner text goes on top of the bars. Its timer is the song's play position,
+        # so it starts over for each song and doesn't advance if playback is paused.
+        draw_title(screen, title_image, title_alpha(max(0, pygame.mixer.music.get_pos()) / 1000.0))
 
         pygame.display.flip()
 
