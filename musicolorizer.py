@@ -14,7 +14,7 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pygame")
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame
-from colormap import colormap
+from colormap import colormap, shapemap
 
 n_fft = 2048 * 4
 hop_length = 512
@@ -38,6 +38,18 @@ def get_colorway(title, colormap):
         return [[random_color(), random_color()]]
 
     return matched
+
+SHAPES = ['rectangle', 'rounded', 'triangle', 'tapered', 'wavy']
+
+def get_shape(title):
+    """Return the bar shape matched by keywords in the title.
+    If keywords for several shapes match, the first shape in shapemap wins.
+    If nothing matches, return a random shape."""
+    title_lower = title.lower()
+    for shape, keywords in shapemap.items():
+        if any(keyword in title_lower for keyword in keywords):
+            return shape
+    return random.choice(SHAPES)
 
 def pick_color_for_bar(matched_colorways):
     """Randomly pick one colorway from the list of matched colorways for a single bar."""
@@ -123,7 +135,6 @@ def get_decibel(target_time, freq):
 # ---------- Playlists ----------
 
 AUDIO_EXTENSIONS = ('.mp3', '.wav', '.flac')
-SHAPES = ['rectangle', 'rounded', 'triangle', 'tapered', 'wavy']
 
 # Posted by the pygame mixer when a song finishes playing
 SONG_END = pygame.USEREVENT + 1
@@ -245,10 +256,10 @@ def play_song(screen, songfile):
         print(f"Can't find {songfile}. Skipping it.")
         return UNPLAYABLE
 
-    # Each song gets its own title-based colorway and a fresh random shape
+    # Each song gets its own title-based colorway and shape (random shape if no keyword matches)
     title = get_title_from_path(songfile)
     colorway = get_colorway(title, colormap)
-    shape = random.choice(SHAPES)
+    shape = get_shape(title)
 
     show_loading(screen, title)
     if not analyze_song(songfile):

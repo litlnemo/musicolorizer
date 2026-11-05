@@ -52,3 +52,13 @@ colormap = {
     'sunshine':  [(60, 30, 0),  (255, 230, 50)], # dark orange → bright warm yellow
     'night':     [(5, 5, 20),   (40, 20, 80)],   # near black → deep indigo
 }
+
+# Keyword-to-shape (order matters: if a title matches more than one shape,
+# the first shape listed here wins)
+shapemap = {
+    'triangle':  ['sharp', 'knife', 'edge', 'blade', 'cut', 'pointed'],
+    'wavy':      ['wave', 'ocean', 'sea', 'river', 'rain', 'water', 'flow'],
+    'rounded':   ['soft', 'gentle', 'cloud', 'pillow', 'dream', 'round'],
+    'tapered':   ['tall', 'rise', 'climb', 'mountain', 'tower', 'reach'],
+    'rectangle': ['block', 'square', 'city', 'straight', 'steady'],
+}
