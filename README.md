@@ -9,7 +9,13 @@ A music visualizer that chooses colors based on words in each song's title, so t
 This is based on my final project for CS50Python through HarvardX in 2024. That was a rudimentary version of the Musicolorizer, but this repo contains the ongoing project I am working on improving.
 
 ## Running it
-Run `python musicolorizer.py` and a file chooser opens. Pick one song or several, or press Cancel to pick a folder instead (every .mp3, .wav and .flac file in it plays, in alphabetical order). Cancelling both quits.
+Run `python musicolorizer.py` and a small window asks what you'd like to play:
+
+- **Pick songs…** opens a file dialog where you can choose one song or several.
+- **Pick a folder…** opens a folder dialog. Every .mp3, .wav and .flac file in that folder plays, in alphabetical order.
+- **Cancel** quits. Cancelling inside either dialog quits too.
+
+The dialogs open in the folder you last picked songs from, or your Music folder the first time. That folder is remembered in a small file, `~/.musicolorizer_last_folder`.
 
 You can also skip the chooser by listing songs or a folder on the command line:
 

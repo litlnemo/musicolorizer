@@ -24,35 +24,151 @@ def fail_if_called():
 
 # ---------- chooser selection -> playlist ----------
 
+@pytest.fixture(autouse=True)
+def temp_last_folder(tmp_path, monkeypatch):
+    """Keep the remembered-folder file in a temp folder, never the real home folder."""
+    path = tmp_path / "last_folder"
+    monkeypatch.setattr(musicolorizer, "LAST_FOLDER_FILE", str(path))
+    return path
+
+
+class FakeChooser:
+    """Stands in for NativeChooser: returns preset answers and records where each dialog was opened."""
+
+    def __init__(self, mode, files=(), folder=""):
+        self.mode, self.files, self.folder = mode, files, folder
+        self.opened = []
+        self.closed = False
+
+    def ask_mode(self):
+        return self.mode
+
+    def ask_files(self, start_dir):
+        self.opened.append(("files", start_dir))
+        return self.files
+
+    def ask_folder(self, start_dir):
+        self.opened.append(("folder", start_dir))
+        return self.folder
+
+    def close(self):
+        self.closed = True
+
+
+def use_chooser(monkeypatch, chooser):
+    monkeypatch.setattr(musicolorizer, "native_dialogs", lambda: chooser)
+    return chooser
+
+
 def test_chooser_several_files(tmp_path):
     a = touch(tmp_path / "b song.mp3")
     b = touch(tmp_path / "a song.wav")
-    chosen = choose_songs(ask_files=lambda: (a, b), ask_folder=fail_if_called)
+    fake = FakeChooser("songs", files=(a, b))
+    chosen = choose_songs(fake.ask_mode, fake.ask_files, fake.ask_folder, str(tmp_path))
     # Files play in the order the dialog gave them
     assert playlist_from_paths(chosen) == [a, b]
+    assert fake.opened == [("files", str(tmp_path))]
 
 
 def test_chooser_one_file(tmp_path):
     a = touch(tmp_path / "Hello, Goodbye.mp3")
-    assert playlist_from_paths(choose_songs(lambda: (a,), fail_if_called)) == [a]
+    fake = FakeChooser("songs", files=(a,))
+    assert playlist_from_paths(choose_songs(fake.ask_mode, fake.ask_files, fake.ask_folder, "/")) == [a]
 
 
-def test_chooser_cancel_files_then_folder(tmp_path):
+def test_chooser_folder(tmp_path):
     touch(tmp_path / "zebra.mp3")
     touch(tmp_path / "Apple.wav")
     touch(tmp_path / "notes.txt")
-    chosen = choose_songs(ask_files=lambda: (), ask_folder=lambda: str(tmp_path))
+    fake = FakeChooser("folder", folder=str(tmp_path))
+    chosen = choose_songs(fake.ask_mode, fake.ask_files, fake.ask_folder, "/start")
     names = [os.path.basename(p) for p in playlist_from_paths(chosen)]
     assert names == ["Apple.wav", "zebra.mp3"]  # alphabetical, audio only
+    assert fake.opened == [("folder", "/start")]  # only the folder dialog opened
 
 
+def test_chooser_cancel_at_choice_opens_nothing():
+    fake = FakeChooser(None)
+    assert choose_songs(fake.ask_mode, fake.ask_files, fake.ask_folder, "/") == []
+    assert fake.opened == []
+
+
+@pytest.mark.parametrize("mode", ["songs", "folder"])
 @pytest.mark.parametrize("cancelled", ["", (), None])
-def test_chooser_cancel_both(cancelled):
-    assert choose_songs(lambda: cancelled, lambda: cancelled) == []
+def test_chooser_cancel_in_dialog_means_never_mind(mode, cancelled):
+    # Cancel in a dialog just stops; it doesn't open the other dialog
+    fake = FakeChooser(mode, files=cancelled, folder=cancelled)
+    assert choose_songs(fake.ask_mode, fake.ask_files, fake.ask_folder, "/") == []
+    assert len(fake.opened) == 1
+
+
+# ---------- starting folder ----------
+
+def test_start_folder_defaults_to_music_then_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    assert musicolorizer.start_folder() == str(home)
+    (home / "Music").mkdir()
+    assert musicolorizer.start_folder() == str(home / "Music")
+
+
+def test_last_folder_round_trip(tmp_path):
+    music = tmp_path / "Tryout"
+    music.mkdir()
+    assert musicolorizer.load_last_folder() is None
+    musicolorizer.save_last_folder(str(music))
+    assert musicolorizer.load_last_folder() == str(music)
+    assert musicolorizer.start_folder() == str(music)
+
+
+def test_last_folder_gone_is_ignored(tmp_path, temp_last_folder):
+    temp_last_folder.write_text(str(tmp_path / "deleted folder"))
+    assert musicolorizer.load_last_folder() is None
+
+
+def test_folder_of_choice(tmp_path):
+    nested = tmp_path / "Music" / "Albums" / "Blue"
+    nested.mkdir(parents=True)
+    song = touch(nested / "Almost Blue.mp3")
+    assert musicolorizer.folder_of_choice([song]) == str(nested)
+    assert musicolorizer.folder_of_choice([str(nested)]) == str(nested)
+    assert musicolorizer.folder_of_choice([]) is None
+
+
+def test_next_run_starts_where_songs_were_picked(tmp_path, monkeypatch):
+    nested = tmp_path / "Music" / "tryout"
+    nested.mkdir(parents=True)
+    song = touch(nested / "Red Vines.mp3")
+
+    # First run: pick a song from the nested folder
+    first = use_chooser(monkeypatch, FakeChooser("songs", files=(song,)))
+    assert musicolorizer.ask_for_songs() == [song]
+    assert first.closed
+
+    # Second run: the folder dialog opens right there, no re-navigating
+    second = use_chooser(monkeypatch, FakeChooser("folder", folder=str(nested)))
+    musicolorizer.ask_for_songs()
+    assert second.opened == [("folder", str(nested))]
+
+    # Third run: the files dialog opens there too
+    third = use_chooser(monkeypatch, FakeChooser("songs", files=()))
+    musicolorizer.ask_for_songs()
+    assert third.opened == [("files", str(nested))]
+
+
+def test_cancel_does_not_change_remembered_folder(tmp_path, monkeypatch):
+    music = tmp_path / "Music"
+    music.mkdir()
+    musicolorizer.save_last_folder(str(music))
+    fake = use_chooser(monkeypatch, FakeChooser(None))
+    assert musicolorizer.ask_for_songs() == []
+    assert fake.closed
+    assert musicolorizer.load_last_folder() == str(music)
 
 
 def test_main_cancel_exits_without_window(monkeypatch, capsys):
-    monkeypatch.setattr(musicolorizer, "choose_songs", lambda: [])
+    use_chooser(monkeypatch, FakeChooser(None))
     monkeypatch.setattr(pygame, "init", fail_if_called)
     musicolorizer.main([])
     assert "nothing to play" in capsys.readouterr().out
@@ -70,12 +186,19 @@ def test_main_no_tkinter_falls_back_to_prompt(monkeypatch, capsys):
     assert "nothing to play" in out
 
 
+def test_mac_message_only_on_mac(monkeypatch):
+    monkeypatch.setattr(musicolorizer.sys, "platform", "darwin")
+    assert musicolorizer.mac_message("hi") == {"message": "hi"}
+    monkeypatch.setattr(musicolorizer.sys, "platform", "linux")
+    assert musicolorizer.mac_message("hi") == {}
+
+
 # ---------- command-line launch ----------
 
 def test_main_args_skip_dialog(tmp_path, monkeypatch):
     a = touch(tmp_path / "a.mp3")
     b = touch(tmp_path / "b.mp3")
-    monkeypatch.setattr(musicolorizer, "choose_songs", fail_if_called)
+    monkeypatch.setattr(musicolorizer, "native_dialogs", fail_if_called)
     played = []
     monkeypatch.setattr(musicolorizer, "run_playlist", lambda screen, songs: played.extend(songs) or len(songs))
     monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")

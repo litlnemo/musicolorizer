@@ -219,62 +219,158 @@ def existing_songs(playlist):
 
 AUDIO_FILETYPES = [("Audio files", "*.mp3 *.wav *.flac"), ("All files", "*")]
 
+# Where the chooser remembers the last folder songs were picked from, so the next run starts there
+LAST_FOLDER_FILE = os.path.join(os.path.expanduser("~"), ".musicolorizer_last_folder")
+
+
+def load_last_folder():
+    """The folder songs were last picked from, or None if there isn't one (or it no longer exists)."""
+    try:
+        with open(LAST_FOLDER_FILE, encoding="utf-8") as f:
+            folder = f.read().strip()
+    except OSError:
+        return None
+    return folder if folder and os.path.isdir(folder) else None
+
+
+def save_last_folder(folder):
+    """Remember a folder for next time. Failing to save is harmless, so errors are ignored."""
+    try:
+        with open(LAST_FOLDER_FILE, "w", encoding="utf-8") as f:
+            f.write(folder)
+    except OSError:
+        pass
+
+
+def start_folder():
+    """Where the dialogs open: the last folder used, else ~/Music, else the home folder."""
+    last = load_last_folder()
+    if last:
+        return last
+    music = os.path.join(os.path.expanduser("~"), "Music")
+    return music if os.path.isdir(music) else os.path.expanduser("~")
+
+
+def folder_of_choice(paths):
+    """The folder to remember after a pick: the chosen folder, or the folder holding the first chosen song."""
+    if not paths:
+        return None
+    first = paths[0]
+    return first if os.path.isdir(first) else os.path.dirname(os.path.abspath(first))
+
+
+def mac_message(text):
+    """The dialog's 'message' option, which only exists on macOS (elsewhere Tk rejects it)."""
+    return {"message": text} if sys.platform == "darwin" else {}
+
+
+class NativeChooser:
+    """The real chooser: a small window asking "songs or a folder?", then the system's file dialog.
+    Uses tkinter (standard library). Raises ImportError if tkinter isn't available."""
+
+    def __init__(self):
+        import tkinter
+        from tkinter import filedialog
+        self.tkinter, self.filedialog = tkinter, filedialog
+        self.root = tkinter.Tk()
+        self.root.withdraw()
+
+    def ask_mode(self):
+        """Ask whether to pick songs or a folder. Returns 'songs', 'folder', or None for Cancel."""
+        tk, root = self.tkinter, self.root
+        choice = {"mode": None}
+
+        def pick(mode):
+            choice["mode"] = mode
+            root.quit()
+
+        root.title("Musicolorizer")
+        frame = tk.Frame(root, padx=24, pady=18)
+        frame.pack()
+        tk.Label(frame, text="What would you like to play?").pack(pady=(0, 14))
+        row = tk.Frame(frame)
+        row.pack()
+        for text, mode in [("Pick songs…", "songs"), ("Pick a folder…", "folder"), ("Cancel", None)]:
+            tk.Button(row, text=text, command=lambda m=mode: pick(m)).pack(side="left", padx=4)
+        root.protocol("WM_DELETE_WINDOW", lambda: pick(None))
+        root.bind("<Escape>", lambda event: pick(None))
+        root.bind("<Return>", lambda event: pick("songs"))
+
+        # Centre the window on the screen and bring it in front of the terminal
+        root.update_idletasks()
+        w, h = root.winfo_reqwidth(), root.winfo_reqheight()
+        x = (root.winfo_screenwidth() - w) // 2
+        y = (root.winfo_screenheight() - h) // 3
+        root.geometry(f"+{x}+{y}")
+        root.deiconify()
+        root.lift()
+        root.attributes("-topmost", True)
+        root.focus_force()
+        root.mainloop()
+
+        root.attributes("-topmost", False)
+        frame.destroy()
+        root.withdraw()
+        root.update()
+        return choice["mode"]
+
+    # The file dialogs are opened WITHOUT a parent window. On macOS, Tk turns a dialog
+    # with a parent into a "sheet" stuck to that window; with the hidden root as parent,
+    # the sheet ended up half off-screen and couldn't be moved. With no parent, macOS
+    # shows a normal free-standing open panel that can be moved and resized.
+
+    def ask_files(self, start_dir):
+        return self.filedialog.askopenfilenames(
+            title="Musicolorizer: choose songs", initialdir=start_dir, filetypes=AUDIO_FILETYPES,
+            **mac_message("Choose one or more songs to play"))
+
+    def ask_folder(self, start_dir):
+        return self.filedialog.askdirectory(
+            title="Musicolorizer: choose a folder", initialdir=start_dir, mustexist=True,
+            **mac_message("Choose a folder; every song in it will play"))
+
+    def close(self):
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
 
 def native_dialogs():
-    """Return (ask_files, ask_folder) functions that open the system's file dialogs.
-    Raises ImportError if tkinter isn't available."""
-    import tkinter
-    from tkinter import filedialog
-
-    def with_hidden_root(show_dialog):
-        root = tkinter.Tk()
-        root.withdraw()
-        try:
-            root.attributes("-topmost", True)  # keep the dialog in front of the terminal
-        except tkinter.TclError:
-            pass
-        try:
-            return show_dialog(root)
-        finally:
-            root.destroy()
-
-    def ask_files():
-        return with_hidden_root(lambda root: filedialog.askopenfilenames(
-            parent=root, title="Musicolorizer: choose songs",
-            message="Choose one or more songs (or Cancel to choose a whole folder instead)",
-            filetypes=AUDIO_FILETYPES))
-
-    def ask_folder():
-        return with_hidden_root(lambda root: filedialog.askdirectory(
-            parent=root, title="Musicolorizer: choose a folder",
-            message="Choose a folder to play every song in it (or Cancel to quit)",
-            mustexist=True))
-
-    return ask_files, ask_folder
+    """Create the real chooser. (Tests replace this with a fake so no window opens.)"""
+    return NativeChooser()
 
 
-def choose_songs(ask_files=None, ask_folder=None):
-    """Ask the user for songs: one or more files first, then (if they cancel) a folder.
-    Returns a list of chosen paths, or [] if they cancelled both.
-    ask_files/ask_folder can be swapped out (the tests use fakes so no dialog opens)."""
-    if ask_files is None or ask_folder is None:
-        ask_files, ask_folder = native_dialogs()
-    files = ask_files()
-    if files:
-        return list(files)
-    folder = ask_folder()
-    return [folder] if folder else []
+def choose_songs(ask_mode, ask_files, ask_folder, start_dir):
+    """Ask "songs or a folder?", then open that dialog at start_dir.
+    Returns the chosen paths, or [] if the user cancelled at any step."""
+    mode = ask_mode()
+    if mode == "songs":
+        files = ask_files(start_dir)
+        return list(files) if files else []
+    if mode == "folder":
+        folder = ask_folder(start_dir)
+        return [folder] if folder else []
+    return []
 
 
 def ask_for_songs():
-    """Open the song chooser, falling back to the old typed prompt if no dialog can be shown."""
+    """Open the song chooser where the user last picked songs, and remember where they picked from this time.
+    Falls back to the old typed prompt if no chooser can be shown."""
     try:
-        return choose_songs()
+        chooser = native_dialogs()
     except Exception as error:  # tkinter missing, or no display for it
         print(f"Couldn't open the song chooser ({error}).")
         print("Tip: you can also run  python musicolorizer.py <song, songs, or folder>")
         typed = input("Choose a song: ")
         return [typed] if typed.strip() else []
+    try:
+        chosen = choose_songs(chooser.ask_mode, chooser.ask_files, chooser.ask_folder, start_folder())
+    finally:
+        chooser.close()
+    if chosen:
+        save_last_folder(folder_of_choice(chosen))
+    return chosen
 
 
 # ---------- Playback state ----------
