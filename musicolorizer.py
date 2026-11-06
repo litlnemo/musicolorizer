@@ -453,8 +453,8 @@ def load_fonts():
         return None
 
 
-def fit_text(font, text, max_width):
-    """Shorten text with '...' until it fits in max_width pixels."""
+def shorten_to_width(font, text, max_width):
+    """Cut text down (used by the playlist panel and the corner title) with '...' until it fits in max_width pixels."""
     if font.size(text)[0] <= max_width:
         return text
     while len(text) > 1 and font.size(text + "...")[0] > max_width:
@@ -466,7 +466,7 @@ def draw_text(screen, fonts, kind, text, color, x, y, max_width, center_in=None)
     if not fonts:
         return
     font = fonts[kind]
-    image = font.render(fit_text(font, text, max_width), True, color)
+    image = font.render(shorten_to_width(font, text, max_width), True, color)
     if center_in:
         screen.blit(image, image.get_rect(center=center_in.center))
     else:
@@ -670,15 +670,6 @@ def title_alpha(elapsed, mode=None):
     if t < show + fade:
         return 1.0 - (t - show) / fade  # fading out
     return 0.0
-
-
-def shorten_to_width(font, text, max_width):
-    """Cut text down with '...' until it fits in max_width pixels."""
-    if font.size(text)[0] <= max_width:
-        return text
-    while len(text) > 1 and font.size(text + "...")[0] > max_width:
-        text = text[:-1]
-    return text.rstrip() + "..."
 
 
 TITLE_MARGIN = 16

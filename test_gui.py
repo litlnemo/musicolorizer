@@ -374,3 +374,25 @@ def test_playlist_shows_current_song(tmp_path, headless_screen, monkeypatch):
     assert (0, ["One", "Two", "Three"]) in drawn
     assert (1, ["One", "Two", "Three"]) in drawn
     assert all(index in (0, 1) for index, _ in drawn)
+
+
+def test_corner_title_drawn_on_screen_every_frame_including_paused(tmp_path, headless_screen, monkeypatch):
+    # The corner text (issue #14) goes on the screen after the bar layer and panel,
+    # so it stays visible while paused instead of being frozen into the bar layer
+    song = make_tiny_wav(tmp_path / "Happy.wav", seconds=2)
+    monkeypatch.setattr(musicolorizer, "title_alpha", lambda t, mode=None: 1.0)
+    order = []
+    real_overlay, real_title = musicolorizer.draw_overlay, musicolorizer.draw_title
+    monkeypatch.setattr(musicolorizer, "draw_overlay",
+                        lambda screen, state, fonts, pos=(-1, -1): order.append(("panel", screen, state.paused)) or real_overlay(screen, state, fonts, pos))
+    monkeypatch.setattr(musicolorizer, "draw_title",
+                        lambda screen, image, alpha: order.append(("title", screen, None)) or real_title(screen, image, alpha))
+
+    p = key(pygame.K_p)
+    scripted_frames(monkeypatch, [[], [p], [], [key(pygame.K_q)]])
+    assert play_song(headless_screen, song) == QUIT
+
+    display = pygame.display.get_surface()
+    assert [kind for kind, _, _ in order] == ["panel", "title"] * 3  # title after the panel, every frame
+    assert all(surface is display for _, surface, _ in order)       # drawn on the screen, not the bar layer
+    assert [paused for kind, _, paused in order if kind == "panel"] == [False, True, True]
