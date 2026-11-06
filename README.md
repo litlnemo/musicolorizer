@@ -33,6 +33,19 @@ While music plays, the window shows the playlist with the current song highlight
 | Skip to the next song | Skip | N or Right Arrow |
 | Quit | Quit | Q, Esc, or close the window |
 
+### Song name in the corner
+While a song plays, its name shows in the bottom-left corner, along with the artist when the file has an artist tag. Songs without tags show the title from the filename. The window title shows the same text.
+
+How long the name stays on screen is set by `TITLE_MODE` near the top of `musicolorizer.py`:
+
+| `TITLE_MODE` | What happens |
+| --- | --- |
+| `'cycle'` (default) | Shows for 5 seconds, fades out, then comes back for 5 seconds every 27 seconds or so |
+| `'fade'` | Shows for 5 seconds at the start of the song, then fades out for good |
+| `'always'` | Stays on screen for the whole song |
+
+The timings are set by `TITLE_SHOW_SECONDS`, `TITLE_FADE_SECONDS` and `TITLE_HIDDEN_SECONDS`, right below `TITLE_MODE`. The timer pauses when the music is paused and starts over with each song.
+
 The chooser uses tkinter, which comes with most Python installs. On a Homebrew Python on macOS you may need `brew install python-tk`. Without it, the app falls back to typing a path at a prompt.
 
 ## Project overview
