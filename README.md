@@ -33,6 +33,19 @@ While music plays, the window shows the playlist with the current song highlight
 | Skip to the next song | Skip | N or Right Arrow |
 | Quit | Quit | Q, Esc, or close the window |
 
+### Song name in the corner
+While a song plays, its name shows in the bottom-left corner, along with the artist when the file has an artist tag. Songs without tags show the title from the filename. The window title shows the same text.
+
+How long the name stays on screen is set by `TITLE_MODE` near the top of `musicolorizer.py`:
+
+| `TITLE_MODE` | What happens |
+| --- | --- |
+| `'cycle'` (default) | Shows for 5 seconds, fades out, then comes back for 5 seconds every 27 seconds or so |
+| `'fade'` | Shows for 5 seconds at the start of the song, then fades out for good |
+| `'always'` | Stays on screen for the whole song |
+
+The timings are set by `TITLE_SHOW_SECONDS`, `TITLE_FADE_SECONDS` and `TITLE_HIDDEN_SECONDS`, right below `TITLE_MODE`. The timer pauses when the music is paused and starts over with each song.
+
 The chooser uses tkinter, which comes with most Python installs. On a Homebrew Python on macOS you may need `brew install python-tk`. Without it, the app falls back to typing a path at a prompt.
 
 ## Project overview
@@ -44,35 +57,87 @@ Thus, the Musicolorizer. It is a simple visualizer that compares song titles to 
 ### Libraries
 The libraries used in this project include:
 - librosa (music analysis)
-- pygame (visual display)
+- pygame (playing the music and drawing everything in the window: the bars, the playlist panel and controls, and the song name)
 - numpy (mathy array stuff used to work with the spectrogram, short-time Fourier analysis, etc.)
-- random (generating random colorways)
-- os environ (setting up the use of ffmpeg to work with sound files)
+- mutagen (reading artist and title tags from the audio files)
+- tkinter (the song chooser window and file dialogs; it comes with most Python installs)
+- random (generating random colorways, and random shapes for titles with no shape keyword)
+- os and sys (file paths, folders, and songs given on the command line)
 
-## project.py
+## musicolorizer.py
 ### `n_fft` and `hop_length`
 The program begins with two settings that define the slices of time that make up the song's spectrogram. `n_fft` is the *frame length*, the "number of samples in an analysis window (or frame)."[^1] `hop_length` is "The number of samples between successive frames, e.g., the columns of a spectrogram."[^1]
 
 ### Colormap
-The colormap is a small dictionary listing certain keywords that may be found in song titles, and the colors that go along with them. In a fully-fledged visualizer, there would be many more of these, but for the purposes of this project, I just used a few that were in songs I had on hand. This is the current colormap:
+The colormap (in `colormap.py`) is a dictionary listing keywords that may be found in song titles, and the colors that go along with them. Each colorway runs from a dark color for quiet sounds to a bright one for loud sounds. This is the current colormap:
 
-| Keyword | Color |
+| Keyword | Colors (quiet → loud) |
 | --- | --- |
-| blue | blue |
-| sad | blue |
-| winter | blue |
-| happy | yellow |
-| love | pink, red |
-| red | red |
-| green | true green |
-| spring | yellow-green |
-| daydreams | purple/magenta |
-    
-### `get_colorway`, `random_color`
-These functions are used to process the song's title (case-insensitively), search the colormap for matching colorways, and generate random colors if there is no match to the colormap dictionary.
+| blue | deep navy → bright blue |
+| sad, winter | black → bright blue |
+| happy | near black → bright yellow |
+| love | near black → hot pink |
+| red | black → bright red |
+| green | near black → lime green |
+| spring | near black → yellow-green |
+| daydreams | black → purple-magenta |
+| gold | dark gold → bright yellow-gold |
+| silver | dark grey → silver |
+| purple | deep blue-black → blue-purple |
+| violet | deep red-purple → soft violet-pink |
+| orange | dark orange → vivid orange |
+| pink | deep rose → light pink |
+| black | black → dark grey |
+| white | dark grey → pure white |
+| gray, grey | near black → medium grey |
+| money | dark green → muted dollar-bill green |
+| storm | dark blue-grey → electric blue-white |
+| snow | dark grey-blue → icy white |
+| ocean, sea | deep navy → teal-cyan |
+| forest | near black → muted pine/evergreen green |
+| smoke | dark grey → pale blue-grey |
+| anger, angry | near black → intense red-orange |
+| lonely | dark blue-grey → muted slate |
+| joy | deep orange → bright warm yellow |
+| magic | purple-black → bright magenta |
+| cold | dark navy → icy pale blue |
+| blood | very dark red → bright red |
+| rose | dark red → soft pink |
+| shadow | black → dark cool grey with purple tint |
+| electric | dark blue → bright cyan |
+| hope | dark amber → warm gold |
+| dark, darkness | near black → very dark purple-grey |
+| fire, flame | dark red → bright orange |
+| dream | deep purple → soft lavender |
+| ghost, haunted | dark grey-green → pale cool white |
+| rain | dark grey-blue → muted steel blue |
+| sun, sunshine | dark orange → bright warm yellow |
+| night | near black → deep indigo |
+
+### `get_colorway`, `pick_color_for_bar`, `random_color`
+These functions process the song's title (case-insensitively) and search the colormap for every keyword that appears in it. If a title matches more than one keyword, each bar picks one of the matching colorways at random (`pick_color_for_bar`), so "Blue Love Song" mixes blue and pink bars. If nothing matches, the song gets a random colorway.
+
+### Shapes and `get_shape`
+Song titles also choose the shape of the bars. The shape map (also in `colormap.py`) lists keywords for each shape:
+
+| Shape | Keywords |
+| --- | --- |
+| triangle | sharp, knife, edge, blade, cut, pointed |
+| wavy | wave, ocean, sea, river, rain, water, flow |
+| rounded | soft, gentle, cloud, pillow, dream, round |
+| tapered | tall, rise, climb, mountain, tower, reach |
+| rectangle | block, square, city, straight, steady |
+
+`get_shape` uses the same case-insensitive matching as `get_colorway`. If a title matches keywords for more than one shape, the first shape in the table wins. If nothing matches, the song gets a random shape. Every bar in a song has the same shape.
 
 ### `ColorBar`
-`ColorBar` is a class that defines the vertical colored bars in the visualizer including height and color (inherited from the colorway definition mentioned earlier), and renders the bars using `pygame.draw.rect()`.[^5]
+`ColorBar` is a class that defines the vertical colored bars in the visualizer, including their height, color (from the song's colorway) and shape. Each bar's color shifts along its colorway's gradient as its frequency gets louder or quieter. Rounded and triangle bars also grow and shrink with the volume; the other shapes stay the full height of the window. There are five shapes:
+
+- **rectangle**: plain bars, drawn with `pygame.draw.rect()`[^5]
+- **rounded**: bars with fully rounded ends, also drawn with `pygame.draw.rect()`
+- **triangle**: a point at the top, drawn with `pygame.draw.polygon()`[^11]
+- **tapered**: wide at the top and narrow at the bottom, also a polygon
+- **wavy**: a polygon with wobbly edges that change every frame
 
 ### `limitation` 
 `limitation` is a function forcing the values of decibel to stay in a certain range, to be used when defining the gradient effect in the colorbars.
@@ -81,7 +146,17 @@ These functions are used to process the song's title (case-insensitively), searc
 This function gets the spectrogram information for a specific location in the track, to be used to generate a colorbar.
 
 ### `main`
-The `main` function controls the overall operation of the program. It begins by getting the song title from user input, setting the colorway using `get_colorway`, then loading the song to analyze with librosa. It uses `librosa.amplitude_to_db()` and `librosa.mel_frequencies()` to convert the spectrogram into a dB-scaled spectrogram[^2] and compute acoustic frequencies.[^3] `librosa.frames_to_time()` then converts frame counts into seconds.[^4] At this point, pygame comes into the picture! Display settings such as `pygame.display.info()`[^6] and `pygame.display.set_mode()`[^7] are used to define and initialize the visualizer screen. Colorbars are generated, then `pygame.mixer.music.load()`[^8] and `pygame.mixer.music.play()`[^9] load and play the music. `pygame.display.flip()`[^10] is used to update the screen. The program runs until the user closes the visualizer.
+The `main` function controls the overall operation of the program. It gets the songs from the command line, or from the song chooser if none were given (`ask_for_songs`). Then it turns them into a playlist (`playlist_from_paths`, which reads a folder's songs in alphabetical order) and reports any files it can't find. Display settings such as `pygame.display.Info()`[^6] and `pygame.display.set_mode()`[^7] are used to define and initialize the visualizer screen. Then `run_playlist` plays the songs in order.
+
+### `play_song`
+`play_song` handles one song from start to finish:
+
+1. It takes the title from the filename and uses it to pick the colorway (`get_colorway`) and shape (`get_shape`). It also reads the artist and title tags for the song name shown in the corner (`get_display_info`).
+2. While a loading screen shows, `analyze_song` loads the song with librosa. It uses `librosa.amplitude_to_db()` and `librosa.mel_frequencies()` to convert the spectrogram into a dB-scaled spectrogram[^2] and compute acoustic frequencies.[^3] `librosa.frames_to_time()` then converts frame counts into seconds.[^4]
+3. Color bars are generated (`build_bars`), then `pygame.mixer.music.load()`[^8] and `pygame.mixer.music.play()`[^9] load and play the music.
+4. Each frame, it handles the controls (pause, skip, quit), updates and draws the bars, then draws the playlist panel and the song name on top. `pygame.display.flip()`[^10] is used to update the screen.
+
+When a song finishes or is skipped, the next song in the playlist starts; quitting stops the playlist. Files that can't be read are skipped with a message.
 
 ## Examples
 **Keyword: "love"**
@@ -98,15 +173,19 @@ The `main` function controls the overall operation of the program. It begins by 
 
 
 ## Design choices
-Some choices were made out of frustration, some because I am still new to this and did not feel comfortable expanding further, and some because they were lower priority. These are things I didn't do, that I would change if I continue with this:
+Some choices were made out of frustration, some because I am still new to this and did not feel comfortable expanding further, and some because they were lower priority. When I finished the CS50P version, these were things I hadn't done yet. Since then, I've added:
 
 - Playlists, not one song at a time
 - Selecting songs, not typing them in
 - More colorways in the colormap
 - Combination colorways if a song has two dictionary words in the title
+- A GUI: a song chooser, plus a playlist panel and controls while the music plays
+- Varying the shapes, chosen by keywords in the title
+- The artist and song name in the corner
+
+Still to do:
+
 - Overlaying lyrics
-- GUI
-- Perhaps varying the shapes; not always vertical rectangles
 - Turning it into some kind of plug-in that could be used with a music player?
 - ...and more that I'm probably forgetting now!
 
@@ -137,4 +216,5 @@ These are used to figure out how to use pygame and librosa, and to explain many 
 [^8]: [https://www.pygame.org/docs/ref/music.html#pygame.mixer.music.load]
 [^9]: [https://www.pygame.org/docs/ref/music.html#pygame.mixer.music.play]
 [^10]: [https://www.pygame.org/docs/ref/display.html#pygame.display.flip]
+[^11]: [https://www.pygame.org/docs/ref/draw.html#pygame.draw.polygon]
 
