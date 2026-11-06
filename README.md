@@ -1,4 +1,6 @@
 # MUSICOLORIZER
+## NOTE - This README isn't up to date at the moment. I've been making a lot of changes. Once things settle down I will update it. 
+
 #### Description: 
 A music visualizer that chooses colors based on words in each song's title, so that the visualization will match the music's mood, or at least its name. For example, the song "Almost Blue" by Elvis Costello would be visualized in shades of blue, as in this picture:
 
