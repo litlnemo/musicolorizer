@@ -1,5 +1,0 @@
-source myenv/bin/activate
-
-If you want to deactivate the virtual environment, you can simply run:
-
-deactivate
