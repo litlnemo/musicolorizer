@@ -383,6 +383,7 @@ class PlaybackState:
         self.index = 0
         self.paused = False
         self.unplayable = set()
+        self._titles = None  # filled in the first time the panel asks for titles
 
     def start(self, index):
         """Make the song at index the current song. A new song always starts unpaused."""
@@ -403,7 +404,11 @@ class PlaybackState:
 
     @property
     def titles(self):
-        return [get_title_from_path(song) for song in self.songs]
+        """The panel row text for each song: the same "Artist — Title" as the corner title.
+        Tags are read once and remembered, since the panel is drawn every frame."""
+        if self._titles is None:
+            self._titles = [get_display_info(song) for song in self.songs]
+        return self._titles
 
 
 # The playlist being played by run_playlist, so play_song can show it

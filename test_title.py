@@ -131,6 +131,48 @@ def test_matching_still_uses_filename_title(tmp_path, monkeypatch):
     assert seen == {"colors": "Almost Blue", "shape": "Almost Blue"}
 
 
+# ---------- playlist panel titles (issue #24) ----------
+
+def test_panel_titles_use_tags(tmp_path):
+    # Same text as the corner title, not the filename
+    song = tagged_mp3(tmp_path / "mrs green.mp3", artist="The Posies", title="Mrs. Green")
+    assert musicolorizer.PlaybackState([song]).titles == ["The Posies — Mrs. Green"]
+
+
+def test_panel_titles_fall_back_to_filename(tmp_path):
+    song = silent_file(tmp_path / "Daydreams.wav")
+    assert musicolorizer.PlaybackState([song]).titles == ["Daydreams"]
+
+
+def test_panel_titles_mixed_playlist(monkeypatch):
+    tags = {"/m/a.mp3": ("Aimee Mann", "Red Vines"), "/m/b.mp3": (None, "Winter"), "/m/Baby Blue.wav": (None, None)}
+    monkeypatch.setattr(musicolorizer, "read_tags", lambda f: tags[f])
+    state = musicolorizer.PlaybackState(list(tags))
+    assert state.titles == ["Aimee Mann — Red Vines", "Winter", "Baby Blue"]
+
+
+def test_panel_titles_read_tags_once(monkeypatch):
+    # The panel is drawn every frame, so tags must not be re-read each time
+    calls = []
+    monkeypatch.setattr(musicolorizer, "read_tags", lambda f: calls.append(f) or ("Artist", "Song"))
+    state = musicolorizer.PlaybackState(["/m/one.mp3", "/m/two.mp3"])
+    for _ in range(3):
+        assert state.titles == ["Artist — Song", "Artist — Song"]
+    assert calls == ["/m/one.mp3", "/m/two.mp3"]
+
+
+def test_panel_draws_tag_title(headless, monkeypatch):
+    # draw_overlay passes the tag text to the row drawing (numbered as before)
+    monkeypatch.setattr(musicolorizer, "read_tags", lambda f: ("The Posies", "Mrs. Green"))
+    drawn = []
+    real = musicolorizer.draw_text
+    monkeypatch.setattr(musicolorizer, "draw_text", lambda screen, fonts, kind, text, *a, **k: drawn.append(text) or real(screen, fonts, kind, text, *a, **k))
+    state = musicolorizer.PlaybackState(["/m/mrs green.mp3"])
+    musicolorizer.draw_overlay(headless, state, musicolorizer.load_fonts())
+    assert "1. The Posies — Mrs. Green" in drawn  # numbering kept in front
+    assert not any("mrs green" in t for t in drawn)
+
+
 # ---------- fade timing ----------
 
 def test_timing_constants():
