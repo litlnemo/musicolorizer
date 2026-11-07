@@ -15,7 +15,7 @@ from mutagen.wave import WAVE
 import musicolorizer
 from musicolorizer import (
     TITLE_FADE_SECONDS, TITLE_HIDDEN_SECONDS, TITLE_SHOW_SECONDS,
-    get_display_info, make_title_image, read_tags, title_alpha,
+    get_display_info, get_match_title, make_title_image, read_tags, title_alpha,
 )
 from colormap import colormap
 
@@ -119,16 +119,49 @@ def test_mutagen_error_is_filename_title(monkeypatch):
     assert get_display_info("/music/Baby Blue.mp3") == "Baby Blue"
 
 
-def test_matching_still_uses_filename_title(tmp_path, monkeypatch):
-    # Tags say "Red", filename says "Blue": colors and shape follow the filename, as before
-    song = tagged_wav(tmp_path / "Almost Blue.wav", artist="Someone", title="Red Sharp Rain")
+def watch_matching(monkeypatch):
+    """Record which titles play_song matches colors/shape against and shows on the loading screen."""
     seen = {}
     monkeypatch.setattr(musicolorizer, "get_colorway", lambda title, cmap: seen.setdefault("colors", title) and [[(0, 0, 0), (0, 0, 255)]])
     monkeypatch.setattr(musicolorizer, "get_shape", lambda title: seen.setdefault("shape", title) and "rectangle")
     monkeypatch.setattr(musicolorizer, "analyze_song", lambda f: False)  # stop right after setup
-    monkeypatch.setattr(musicolorizer, "show_loading", lambda screen, title: None)
+    monkeypatch.setattr(musicolorizer, "show_loading", lambda screen, title: seen.setdefault("loading", title))
+    return seen
+
+
+def test_matching_uses_tag_title(tmp_path, monkeypatch):
+    # Tags say "Red", filename says "Blue": colors and shape follow the tag title (issue #17)
+    song = tagged_wav(tmp_path / "Almost Blue.wav", artist="Someone", title="Red Sharp Rain")
+    seen = watch_matching(monkeypatch)
     assert musicolorizer.play_song(None, song) == musicolorizer.UNPLAYABLE
-    assert seen == {"colors": "Almost Blue", "shape": "Almost Blue"}
+    assert seen == {"colors": "Red Sharp Rain", "shape": "Red Sharp Rain", "loading": "Almost Blue"}
+
+
+def test_matching_untagged_uses_filename_title(tmp_path, monkeypatch):
+    song = silent_file(tmp_path / "Almost Blue.wav")
+    seen = watch_matching(monkeypatch)
+    assert musicolorizer.play_song(None, song) == musicolorizer.UNPLAYABLE
+    assert seen == {"colors": "Almost Blue", "shape": "Almost Blue", "loading": "Almost Blue"}
+
+
+def test_match_title_from_tags(tmp_path):
+    song = tagged_mp3(tmp_path / "track01.mp3", artist="Aimee Mann", title="Red Vines")
+    assert get_match_title(song) == "Red Vines"  # title only, no artist
+
+
+def test_match_title_without_tags(tmp_path):
+    assert get_match_title(silent_file(tmp_path / "Baby Blue.wav")) == "Baby Blue"
+
+
+def test_match_title_artist_only(tmp_path):
+    # An artist tag but no title tag: the title still comes from the filename
+    song = tagged_wav(tmp_path / "Winter.wav", artist="Tori Amos")
+    assert get_match_title(song) == "Winter"
+
+
+def test_match_title_unreadable(monkeypatch):
+    monkeypatch.setattr(musicolorizer, "read_tags", lambda f: (None, None))
+    assert get_match_title("/music/Mrs Green.mp3") == "Mrs Green"
 
 
 # ---------- playlist panel titles (issue #24) ----------

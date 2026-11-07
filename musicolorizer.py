@@ -655,6 +655,13 @@ def get_display_info(songfile):
     return f"{artist} — {title}" if artist else title
 
 
+def get_match_title(songfile):
+    """The title that colors and shape are matched against: the title tag if the file has one,
+    otherwise the filename title. Just the title, never the artist."""
+    _, title = read_tags(songfile)
+    return title or get_title_from_path(songfile)
+
+
 def title_alpha(elapsed, mode=None):
     """How visible the corner text is (0.0 hidden to 1.0 full) at a given number of seconds into the song."""
     mode = TITLE_MODE if mode is None else mode
@@ -719,12 +726,14 @@ def play_song(screen, songfile):
     # Show the playlist being played, or just this song if play_song was called on its own
     state = now_playing if now_playing is not None and now_playing.current_song == songfile else PlaybackState([songfile])
 
-    # Each song gets its own title-based colorway and shape (random shape if no keyword matches)
+    # Each song gets its own title-based colorway and shape (random shape if no keyword matches),
+    # matched against the title tag if the file has one, else the filename title
+    match_title = get_match_title(songfile)
+    colorway = get_colorway(match_title, colormap)
+    shape = get_shape(match_title)
+    # The loading screen still shows the filename title
     title = get_title_from_path(songfile)
-    colorway = get_colorway(title, colormap)
-    shape = get_shape(title)
-    # What's shown in the corner and the caption (artist/title tags if the file has them);
-    # colors and shape above still come from the filename title
+    # What's shown in the corner and the caption (artist/title tags if the file has them)
     display = get_display_info(songfile)
 
     show_loading(screen, title)
