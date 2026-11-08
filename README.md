@@ -72,7 +72,7 @@ The timings are set by `TITLE_SHOW_SECONDS`, `TITLE_FADE_SECONDS` and `TITLE_HID
 pytest
 ```
 
-The tests never open a real window or dialog: the song chooser is replaced with a fake, and pygame runs with SDL's "dummy" video and audio drivers. Audio for the playback tests comes from tiny WAV files generated in a temporary folder, not the songs in this repo.
+The tests never open a real window or dialog: the song chooser is replaced with a fake, and pygame runs with SDL's "dummy" video and audio drivers. Audio for the playback tests comes from tiny WAV files the tests generate in a temporary folder, so you don't need any songs to run them.
 
 ## Project overview
 This project is the beginning of (I hope!) a larger project for a context-aware music visualizer. Over the years, I've enjoyed using music visualizers built into software such as iTunes, but they've always been lacking something. A sad, mournful song might be visualized with happy, upbeat colors. A song with "blue" in the title might be visualized in red. It kind of drives me crazy. If a human was actively controlling the animation, they'd probably choose colors and shapes that work well with the music, but none of the visualizers I've used have had that capability.
