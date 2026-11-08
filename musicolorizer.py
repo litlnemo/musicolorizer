@@ -153,6 +153,8 @@ SONG_END = pygame.USEREVENT + 1
 # What happened to a song: it played to the end, the user skipped it,
 # the user quit, or it couldn't be loaded at all
 ENDED, NEXT, QUIT, UNPLAYABLE = 'ended', 'next', 'quit', 'unplayable'
+# The user went back a track (on the first song, that restarts it)
+PREVIOUS = 'previous'
 # Pausing doesn't end a song; play_song handles it and keeps going
 PAUSE = 'pause'
 # Neither does hiding or showing the playlist panel
@@ -449,13 +451,15 @@ def panel_width(screen_size):
 
 
 def control_layout(screen_size):
-    """Where the Pause, Skip and Quit buttons go, as {action: pygame.Rect}."""
+    """Where the Previous, Pause, Skip and Quit buttons go, as {action: pygame.Rect}.
+    All four share the panel's top row evenly; the panel never widens for them."""
+    actions = (PREVIOUS, PAUSE, NEXT, QUIT)
     inner = panel_width(screen_size) - 2 * PANEL_PADDING
-    button_width = max(1, (inner - 2 * BUTTON_GAP) // 3)
+    button_width = max(1, (inner - (len(actions) - 1) * BUTTON_GAP) // len(actions))
     x = PANEL_MARGIN + PANEL_PADDING
     y = PANEL_MARGIN + PANEL_PADDING
     rects = {}
-    for action in (PAUSE, NEXT, QUIT):
+    for action in actions:
         rects[action] = pygame.Rect(x, y, button_width, BUTTON_HEIGHT)
         x += button_width + BUTTON_GAP
     return rects
@@ -485,7 +489,8 @@ def draw_chip(screen, fonts, mouse_pos=(-1, -1)):
 def load_fonts():
     """Fonts for the panel, or None if pygame can't draw text."""
     try:
-        return {"button": pygame.font.Font(None, 24), "row": pygame.font.Font(None, 24), "header": pygame.font.Font(None, 22)}
+        # "control" is a little smaller than "button" (the Show playlist chip) so four buttons' labels fit in one row
+        return {"button": pygame.font.Font(None, 24), "control": pygame.font.Font(None, 20), "row": pygame.font.Font(None, 24), "header": pygame.font.Font(None, 22)}
     except pygame.error:
         return None
 
@@ -529,7 +534,7 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     screen.blit(panel, (PANEL_MARGIN, PANEL_MARGIN))
 
     # Buttons
-    labels = {PAUSE: "Resume (P)" if state.paused else "Pause (P)", NEXT: "Skip (N)", QUIT: "Quit (Q)"}
+    labels = {PREVIOUS: "Prev (Left)", PAUSE: "Resume (P)" if state.paused else "Pause (P)", NEXT: "Skip (N)", QUIT: "Quit (Q)"}
     for action, rect in buttons.items():
         if action == PAUSE and state.paused:
             fill = (70, 110, 190)
@@ -539,7 +544,7 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
             fill = (55, 55, 55)
         pygame.draw.rect(screen, fill, rect, border_radius=6)
         pygame.draw.rect(screen, (150, 150, 150), rect, width=1, border_radius=6)
-        draw_text(screen, fonts, "button", labels[action], (235, 235, 235), 0, 0, rect.width - 8, center_in=rect)
+        draw_text(screen, fonts, "control", labels[action], (235, 235, 235), 0, 0, rect.width - 8, center_in=rect)
 
     # Playlist header and rows
     x = PANEL_MARGIN + PANEL_PADDING
@@ -573,7 +578,7 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
 # ---------- Playback ----------
 
 def next_action(event, buttons=None):
-    """Decide what an event means for playback: QUIT, NEXT, PAUSE, TOGGLE_PANEL, ENDED, or None (keep playing).
+    """Decide what an event means for playback: QUIT, NEXT, PREVIOUS, PAUSE, TOGGLE_PANEL, ENDED, or None (keep playing).
     buttons is the {action: rect} map of what's clickable (from control_layout or draw_overlay), for mouse clicks."""
     if event.type == pygame.QUIT:
         return QUIT
@@ -584,6 +589,8 @@ def next_action(event, buttons=None):
             return QUIT
         if event.key in (pygame.K_n, pygame.K_RIGHT):
             return NEXT
+        if event.key == pygame.K_LEFT:
+            return PREVIOUS
         if event.key == pygame.K_p:
             return PAUSE
         if event.key == pygame.K_h:
@@ -756,7 +763,7 @@ def draw_title(screen, image, alpha):
 
 def play_song(screen, songfile):
     """Analyze and visualize one song until it ends, is skipped, or the user quits.
-    Returns ENDED, NEXT, QUIT, or UNPLAYABLE."""
+    Returns ENDED, NEXT, PREVIOUS, QUIT, or UNPLAYABLE."""
     if not os.path.isfile(songfile):
         print(f"Can't find {songfile}. Skipping it.")
         return UNPLAYABLE
@@ -832,21 +839,41 @@ def play_song(screen, songfile):
         clock.tick(60)
 
 
+def previous_index(index, unplayable):
+    """Where Previous goes from song index: the nearest earlier song that can play,
+    or index itself (restart the current song) if there isn't one."""
+    for earlier in range(index - 1, -1, -1):
+        if earlier not in unplayable:
+            return earlier
+    return index
+
+
 def run_playlist(screen, playlist):
-    """Play each song in order. Returns how many songs actually played."""
+    """Play the songs in order, going back a song on Previous. Returns how many times a song actually played
+    (0 means none of them could play)."""
     global now_playing
     now_playing = PlaybackState(playlist)
     played = 0
+    index = 0
     try:
-        for index, songfile in enumerate(playlist):
+        while index < len(playlist):
+            # Coming forward again after going back: don't retry a song that already couldn't play
+            if index in now_playing.unplayable:
+                index += 1
+                continue
             now_playing.start(index)
-            result = play_song(screen, songfile)
+            result = play_song(screen, playlist[index])
             if result == UNPLAYABLE:
                 now_playing.mark_unplayable(index)
+                index += 1
                 continue
             played += 1
             if result == QUIT:
                 break
+            if result == PREVIOUS:
+                index = previous_index(index, now_playing.unplayable)
+            else:  # ENDED or NEXT
+                index += 1
     finally:
         now_playing = None
     return played

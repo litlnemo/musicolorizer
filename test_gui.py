@@ -459,7 +459,7 @@ def test_draw_overlay_visible_unchanged(offscreen, monkeypatch):
     clickable = draw_overlay(offscreen, state, musicolorizer.load_fonts())
     # Same buttons and rows as before the toggle existed, and no chip
     assert clickable == control_layout(offscreen.get_size())
-    assert drawn == ["Pause (P)", "Skip (N)", "Quit (Q)", "Playlist: 1 of 2", "1. One", "2. Two"]
+    assert drawn == ["Prev (Left)", "Pause (P)", "Skip (N)", "Quit (Q)", "Playlist: 1 of 2", "1. One", "2. Two"]
 
 
 def test_chip_is_hit_testable(offscreen):
@@ -526,3 +526,105 @@ def test_hidden_panel_stays_hidden_across_songs_and_new_playlist_shows_it(tmp_pa
     scripted_frames(monkeypatch, [[], [key(pygame.K_q)]])
     assert run_playlist(headless_screen, songs[:1]) == 1
     assert seen == [(0, True)]
+
+
+# ---------- Previous track (issue #19) ----------
+
+from musicolorizer import PREVIOUS, previous_index
+
+
+def test_next_action_left_arrow_is_previous():
+    assert next_action(key(pygame.K_LEFT)) == PREVIOUS
+    assert next_action(key(pygame.K_RIGHT)) == NEXT  # Right still skips
+
+
+def test_four_buttons_same_width_and_fit_the_panel():
+    for size in [(200, 150), (400, 300), (720, 900), (1600, 1000)]:
+        buttons = control_layout(size)
+        assert list(buttons) == [PREVIOUS, PAUSE, NEXT, QUIT]
+        widths = {rect.width for rect in buttons.values()}
+        assert len(widths) == 1 and widths.pop() > 0
+        # Inside the panel, which still caps at 380px wide
+        panel_right = musicolorizer.PANEL_MARGIN + musicolorizer.panel_width(size)
+        assert buttons[QUIT].right <= panel_right - musicolorizer.PANEL_PADDING
+        assert buttons[PREVIOUS].right < buttons[PAUSE].left
+    assert musicolorizer.panel_width((1600, 1000)) == 380
+
+
+def test_button_labels_fit_at_full_width():
+    pygame.font.init()
+    try:
+        fonts = musicolorizer.load_fonts()
+        buttons = control_layout((1600, 1000))
+        for label in ("Prev (Left)", "Pause (P)", "Resume (P)", "Skip (N)", "Quit (Q)"):
+            assert fonts["control"].size(label)[0] <= buttons[PAUSE].width - 8  # no "..." at full size
+    finally:
+        pygame.font.quit()
+
+
+def test_previous_button_click():
+    buttons = control_layout((400, 300))
+    assert next_action(click(buttons[PREVIOUS].center), buttons) == PREVIOUS
+
+
+def test_previous_index():
+    assert previous_index(2, set()) == 1
+    assert previous_index(0, set()) == 0        # first song: restart it
+    assert previous_index(3, {1, 2}) == 0       # skip songs that couldn't play
+    assert previous_index(2, {0, 1}) == 2       # nothing playable before: restart
+
+
+def scripted_player(monkeypatch, results):
+    """Stand-in for play_song: returns the next preset result each time, and records which index was playing."""
+    played = []
+    queue = iter(results)
+
+    def fake_play(screen, songfile):
+        state = musicolorizer.now_playing
+        played.append(state.index)
+        assert state.current_song == songfile and state.paused is False
+        return next(queue)
+
+    monkeypatch.setattr(musicolorizer, "play_song", fake_play)
+    return played
+
+
+def test_previous_steps_back_one(monkeypatch):
+    played = scripted_player(monkeypatch, [ENDED, NEXT, PREVIOUS, ENDED, ENDED])
+    assert run_playlist(None, ["/m/A.mp3", "/m/B.mp3", "/m/C.mp3"]) == 5
+    assert played == [0, 1, 2, 1, 2]
+
+
+def test_previous_on_first_song_restarts_it(monkeypatch):
+    played = scripted_player(monkeypatch, [PREVIOUS, PREVIOUS, ENDED, QUIT])
+    assert run_playlist(None, ["/m/A.mp3", "/m/B.mp3"]) == 4
+    assert played == [0, 0, 0, 1]
+
+
+def test_previous_skips_back_over_unplayable(monkeypatch):
+    played = scripted_player(monkeypatch, [ENDED, UNPLAYABLE, PREVIOUS, ENDED, ENDED])
+    assert run_playlist(None, ["/m/A.mp3", "/m/bad.mp3", "/m/C.mp3"]) == 4
+    assert played == [0, 1, 2, 0, 2]  # back from C lands on A; going forward again doesn't retry the bad song
+
+
+def test_previous_while_paused_returns_previous_and_unpauses(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "Happy.wav", seconds=2)
+    stops = []
+    real_stop = pygame.mixer.music.stop
+    monkeypatch.setattr(pygame.mixer.music, "stop", lambda: stops.append(1) or real_stop())
+    buttons = control_layout(headless_screen.get_size())
+    scripted_frames(monkeypatch, [[key(pygame.K_p)], [click(buttons[PREVIOUS].center)]])
+    assert play_song(headless_screen, song) == PREVIOUS
+    assert stops  # the paused song was stopped, like Skip
+
+
+def test_previous_in_real_playlist_while_paused(tmp_path, headless_screen, monkeypatch):
+    songs = [make_tiny_wav(tmp_path / f"{name}.wav", seconds=2) for name in ("One", "Two")]
+    seen = []
+    real_draw = musicolorizer.draw_overlay
+    monkeypatch.setattr(musicolorizer, "draw_overlay",
+                        lambda screen, state, fonts, pos=(-1, -1): seen.append((state.index, state.paused)) or real_draw(screen, state, fonts, pos))
+    # Song 1, skip; song 2, pause, then Left while paused goes back to song 1 playing; quit
+    scripted_frames(monkeypatch, [[], [key(pygame.K_n)], [key(pygame.K_p)], [key(pygame.K_LEFT)], [], [key(pygame.K_q)]])
+    assert run_playlist(headless_screen, songs) == 3
+    assert seen == [(0, False), (1, True), (0, False)]
