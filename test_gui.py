@@ -396,3 +396,133 @@ def test_corner_title_drawn_on_screen_every_frame_including_paused(tmp_path, hea
     assert [kind for kind, _, _ in order] == ["panel", "title"] * 3  # title after the panel, every frame
     assert all(surface is display for _, surface, _ in order)       # drawn on the screen, not the bar layer
     assert [paused for kind, _, paused in order if kind == "panel"] == [False, True, True]
+
+
+# ---------- hiding and showing the playlist panel (issue #25) ----------
+
+from musicolorizer import CHIP_LABEL, TOGGLE_PANEL, chip_layout, draw_overlay
+
+
+def test_panel_starts_visible_and_toggles():
+    state = PlaybackState(["a.mp3", "b.mp3"])
+    assert state.panel_visible is True
+    assert state.toggle_panel() is False
+    assert state.panel_visible is False
+    # Moving to the next song doesn't bring a hidden panel back
+    state.start(1)
+    assert state.panel_visible is False
+    assert state.toggle_panel() is True
+    # A fresh playlist always starts with the panel showing
+    assert PlaybackState(["a.mp3"]).panel_visible is True
+
+
+def test_next_action_h_key_toggles_panel():
+    assert next_action(key(pygame.K_h)) == TOGGLE_PANEL
+
+
+@pytest.fixture
+def offscreen():
+    """A plain Surface to draw on: fonts work, but no window is opened."""
+    pygame.font.init()
+    yield pygame.Surface((400, 300))
+    pygame.font.quit()
+
+
+def record_text(monkeypatch):
+    drawn = []
+    real = musicolorizer.draw_text
+    monkeypatch.setattr(musicolorizer, "draw_text",
+                        lambda screen, fonts, kind, text, *rest, **kw: drawn.append(text) or real(screen, fonts, kind, text, *rest, **kw))
+    return drawn
+
+
+def test_draw_overlay_hidden_draws_only_the_chip(offscreen, monkeypatch):
+    state = PlaybackState(["One.mp3", "Two.mp3", "Three.mp3"])
+    state.panel_visible = False
+    drawn = record_text(monkeypatch)
+    background = (12, 34, 56)
+    offscreen.fill(background)
+
+    clickable = draw_overlay(offscreen, state, musicolorizer.load_fonts())
+
+    assert drawn == [CHIP_LABEL]  # no buttons, no header, no playlist rows
+    assert clickable == {TOGGLE_PANEL: chip_layout(offscreen.get_size())}
+    # Where the playlist rows would be (below the chip) is left untouched
+    chip = clickable[TOGGLE_PANEL]
+    for y in range(chip.bottom + 4, chip.bottom + 120, 10):
+        assert offscreen.get_at((chip.left + 20, y))[:3] == background
+
+
+def test_draw_overlay_visible_unchanged(offscreen, monkeypatch):
+    state = PlaybackState(["One.mp3", "Two.mp3"])
+    drawn = record_text(monkeypatch)
+    clickable = draw_overlay(offscreen, state, musicolorizer.load_fonts())
+    # Same buttons and rows as before the toggle existed, and no chip
+    assert clickable == control_layout(offscreen.get_size())
+    assert drawn == ["Pause (P)", "Skip (N)", "Quit (Q)", "Playlist: 1 of 2", "1. One", "2. Two"]
+
+
+def test_chip_is_hit_testable(offscreen):
+    state = PlaybackState(["a.mp3"])
+    state.panel_visible = False
+    clickable = draw_overlay(offscreen, state, None)  # works without fonts too
+    chip = clickable[TOGGLE_PANEL]
+    assert next_action(click(chip.center), clickable) == TOGGLE_PANEL
+    assert next_action(click((390, 290)), clickable) is None
+    # The hidden Pause/Skip/Quit buttons can't be clicked where they used to be
+    hidden_buttons = control_layout(offscreen.get_size())
+    assert next_action(click(hidden_buttons[QUIT].center), clickable) is None
+
+
+def test_chip_fits_in_small_window():
+    for size in [(120, 90), (200, 150), (1600, 1000)]:
+        chip = chip_layout(size)
+        assert chip.width > 0 and chip.right <= size[0]
+        assert chip.topleft == (musicolorizer.PANEL_MARGIN, musicolorizer.PANEL_MARGIN)
+
+
+def test_hide_with_h_keys_still_work_click_chip_to_show(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "Happy.wav", seconds=2)
+    monkeypatch.setattr(musicolorizer, "title_alpha", lambda t, mode=None: 1.0)
+    mixer_calls = []
+    monkeypatch.setattr(pygame.mixer.music, "pause", lambda: mixer_calls.append("pause"))
+    monkeypatch.setattr(pygame.mixer.music, "unpause", lambda: mixer_calls.append("unpause"))
+    frames = []
+    real_overlay, real_title = musicolorizer.draw_overlay, musicolorizer.draw_title
+    monkeypatch.setattr(musicolorizer, "draw_overlay",
+                        lambda screen, state, fonts, pos=(-1, -1): frames.append([state.panel_visible, state.paused]) or real_overlay(screen, state, fonts, pos))
+    monkeypatch.setattr(musicolorizer, "draw_title",
+                        lambda screen, image, alpha: frames[-1].append("title") or real_title(screen, image, alpha))
+
+    chip = chip_layout(headless_screen.get_size())
+    p = key(pygame.K_p)
+    # Frame 1 shows the panel, H hides it, P pauses and resumes while hidden, clicking the chip shows it, Q quits
+    scripted_frames(monkeypatch, [[], [key(pygame.K_h)], [p], [p], [click(chip.center)], [key(pygame.K_q)]])
+    assert play_song(headless_screen, song) == QUIT
+
+    assert frames == [
+        [True, False, "title"],
+        [False, False, "title"],
+        [False, True, "title"],   # pausing works with the panel hidden
+        [False, False, "title"],
+        [True, False, "title"],   # the chip brought the panel back
+    ]
+    assert mixer_calls == ["pause", "unpause"]
+
+
+def test_hidden_panel_stays_hidden_across_songs_and_new_playlist_shows_it(tmp_path, headless_screen, monkeypatch):
+    songs = [make_tiny_wav(tmp_path / f"{name}.wav", seconds=2) for name in ("One", "Two")]
+    seen = []
+    real_draw = musicolorizer.draw_overlay
+    monkeypatch.setattr(musicolorizer, "draw_overlay",
+                        lambda screen, state, fonts, pos=(-1, -1): seen.append((state.index, state.panel_visible)) or real_draw(screen, state, fonts, pos))
+    # Hide on song 1, skip to song 2 (still hidden), quit
+    scripted_frames(monkeypatch, [[key(pygame.K_h)], [key(pygame.K_n)], [], [key(pygame.K_q)]])
+    assert run_playlist(headless_screen, songs) == 2
+    assert seen == [(0, False), (1, False)]
+
+    # Starting a new playlist starts with the panel showing again
+    seen.clear()
+    scripted_frames(monkeypatch, [[], [key(pygame.K_q)]])
+    assert run_playlist(headless_screen, songs[:1]) == 1
+    assert seen == [(0, True)]

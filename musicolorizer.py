@@ -155,6 +155,8 @@ SONG_END = pygame.USEREVENT + 1
 ENDED, NEXT, QUIT, UNPLAYABLE = 'ended', 'next', 'quit', 'unplayable'
 # Pausing doesn't end a song; play_song handles it and keeps going
 PAUSE = 'pause'
+# Neither does hiding or showing the playlist panel
+TOGGLE_PANEL = 'toggle_panel'
 
 
 def clean_path(path):
@@ -376,13 +378,17 @@ def ask_for_songs():
 # ---------- Playback state ----------
 
 class PlaybackState:
-    """What the playlist panel shows: the songs, which one is current, which couldn't play, and whether it's paused."""
+    """What the playlist panel shows: the songs, which one is current, which couldn't play, whether it's paused,
+    and whether the panel itself is showing."""
 
     def __init__(self, songs):
         self.songs = list(songs)
         self.index = 0
         self.paused = False
         self.unplayable = set()
+        # A new playlist always starts with the panel showing, so nobody gets stuck with it hidden.
+        # start() leaves this alone, so a hidden panel stays hidden from one song to the next.
+        self.panel_visible = True
         self._titles = None  # filled in the first time the panel asks for titles
 
     def start(self, index):
@@ -397,6 +403,11 @@ class PlaybackState:
         """Flip between paused and playing. Returns True if now paused."""
         self.paused = not self.paused
         return self.paused
+
+    def toggle_panel(self):
+        """Hide the playlist panel if it's showing, or show it if it's hidden. Returns True if now showing."""
+        self.panel_visible = not self.panel_visible
+        return self.panel_visible
 
     @property
     def current_song(self):
@@ -450,6 +461,27 @@ def control_layout(screen_size):
     return rects
 
 
+CHIP_LABEL = "Show playlist (H)"
+CHIP_WIDTH = 170
+
+
+def chip_layout(screen_size):
+    """Where the small "Show playlist (H)" chip goes while the panel is hidden: the panel's top-left corner."""
+    return pygame.Rect(PANEL_MARGIN, PANEL_MARGIN, min(CHIP_WIDTH, panel_width(screen_size)), BUTTON_HEIGHT)
+
+
+def draw_chip(screen, fonts, mouse_pos=(-1, -1)):
+    """Draw the "Show playlist (H)" chip in place of the hidden panel. Returns {TOGGLE_PANEL: rect}."""
+    rect = chip_layout(screen.get_size())
+    chip = pygame.Surface(rect.size, pygame.SRCALPHA)
+    fill = (95, 95, 95, 210) if rect.collidepoint(mouse_pos) else (0, 0, 0, 170)
+    pygame.draw.rect(chip, fill, chip.get_rect(), border_radius=6)
+    screen.blit(chip, rect.topleft)
+    pygame.draw.rect(screen, (150, 150, 150), rect, width=1, border_radius=6)
+    draw_text(screen, fonts, "button", CHIP_LABEL, (235, 235, 235), 0, 0, rect.width - 8, center_in=rect)
+    return {TOGGLE_PANEL: rect}
+
+
 def load_fonts():
     """Fonts for the panel, or None if pygame can't draw text."""
     try:
@@ -479,7 +511,11 @@ def draw_text(screen, fonts, kind, text, color, x, y, max_width, center_in=None)
 
 
 def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
-    """Draw the playlist panel and control buttons over the bars. Returns the button rects."""
+    """Draw the playlist panel and control buttons over the bars. Returns {action: rect} for whatever
+    is clickable right now: the Pause/Skip/Quit buttons, or just the "Show playlist" chip if the panel is hidden."""
+    if not state.panel_visible:
+        return draw_chip(screen, fonts, mouse_pos)
+
     buttons = control_layout(screen.get_size())
     width = panel_width(screen.get_size())
     start, end = visible_range(state.index, len(state.songs), MAX_ROWS)
@@ -537,8 +573,8 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
 # ---------- Playback ----------
 
 def next_action(event, buttons=None):
-    """Decide what an event means for playback: QUIT, NEXT, PAUSE, ENDED, or None (keep playing).
-    buttons is the {action: rect} map from control_layout, for mouse clicks."""
+    """Decide what an event means for playback: QUIT, NEXT, PAUSE, TOGGLE_PANEL, ENDED, or None (keep playing).
+    buttons is the {action: rect} map of what's clickable (from control_layout or draw_overlay), for mouse clicks."""
     if event.type == pygame.QUIT:
         return QUIT
     if event.type == SONG_END:
@@ -550,6 +586,8 @@ def next_action(event, buttons=None):
             return NEXT
         if event.key == pygame.K_p:
             return PAUSE
+        if event.key == pygame.K_h:
+            return TOGGLE_PANEL
     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and buttons:
         for action, rect in buttons.items():
             if rect.collidepoint(event.pos):
@@ -768,6 +806,8 @@ def play_song(screen, songfile):
                     pygame.mixer.music.pause()
                 else:
                     pygame.mixer.music.unpause()
+            elif action == TOGGLE_PANEL:
+                state.toggle_panel()
             elif action:
                 pygame.mixer.music.stop()
                 pygame.event.clear(SONG_END)  # stopping can post an end event; don't let it skip the next song
@@ -782,7 +822,8 @@ def play_song(screen, songfile):
                 b.render(bar_layer)
 
         screen.blit(bar_layer, (0, 0))
-        draw_overlay(screen, state, fonts, pygame.mouse.get_pos())
+        # What's clickable depends on whether the panel is showing, so take it from what was just drawn
+        buttons = draw_overlay(screen, state, fonts, pygame.mouse.get_pos())
         # The corner text goes on the screen (not the bar layer), on top of the bars and panel.
         # Its timer is the song's play position, so it starts over for each song and holds while paused.
         draw_title(screen, title_image, title_alpha(max(0, pygame.mixer.music.get_pos()) / 1000.0))
