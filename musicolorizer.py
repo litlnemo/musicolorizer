@@ -155,6 +155,10 @@ SONG_END = pygame.USEREVENT + 1
 ENDED, NEXT, QUIT, UNPLAYABLE = 'ended', 'next', 'quit', 'unplayable'
 # The user went back a track (on the first song, that restarts it)
 PREVIOUS = 'previous'
+# The user pressed Previous partway into a song, so it starts over instead
+RESTART = 'restart'
+# Like most players: Previous more than this many seconds into a song restarts it
+PREVIOUS_RESTART_SECONDS = 3
 # Pausing doesn't end a song; play_song handles it and keeps going
 PAUSE = 'pause'
 # Neither does hiding or showing the playlist panel
@@ -534,7 +538,7 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     screen.blit(panel, (PANEL_MARGIN, PANEL_MARGIN))
 
     # Buttons
-    labels = {PREVIOUS: "Prev (Left)", PAUSE: "Resume (P)" if state.paused else "Pause (P)", NEXT: "Skip (N)", QUIT: "Quit (Q)"}
+    labels = {PREVIOUS: "Prev (<)", PAUSE: "Resume (P)" if state.paused else "Pause (P)", NEXT: "Skip (>)", QUIT: "Quit (Q)"}
     for action, rect in buttons.items():
         if action == PAUSE and state.paused:
             fill = (70, 110, 190)
@@ -587,9 +591,10 @@ def next_action(event, buttons=None):
     if event.type == pygame.KEYDOWN:
         if event.key in (pygame.K_q, pygame.K_ESCAPE):
             return QUIT
-        if event.key in (pygame.K_n, pygame.K_RIGHT):
+        # The buttons say < and >: the arrow keys and the < > keys (comma and period) all work, and N still skips
+        if event.key in (pygame.K_n, pygame.K_RIGHT, pygame.K_PERIOD, pygame.K_GREATER) or getattr(event, "unicode", "") == ">":
             return NEXT
-        if event.key == pygame.K_LEFT:
+        if event.key in (pygame.K_LEFT, pygame.K_COMMA, pygame.K_LESS) or getattr(event, "unicode", "") == "<":
             return PREVIOUS
         if event.key == pygame.K_p:
             return PAUSE
@@ -763,7 +768,7 @@ def draw_title(screen, image, alpha):
 
 def play_song(screen, songfile):
     """Analyze and visualize one song until it ends, is skipped, or the user quits.
-    Returns ENDED, NEXT, PREVIOUS, QUIT, or UNPLAYABLE."""
+    Returns ENDED, NEXT, PREVIOUS, RESTART, QUIT, or UNPLAYABLE."""
     if not os.path.isfile(songfile):
         print(f"Can't find {songfile}. Skipping it.")
         return UNPLAYABLE
@@ -816,6 +821,9 @@ def play_song(screen, songfile):
             elif action == TOGGLE_PANEL:
                 state.toggle_panel()
             elif action:
+                if action == PREVIOUS:
+                    # Read the position before stopping (it holds still while paused)
+                    action = previous_or_restart(max(0, pygame.mixer.music.get_pos()) / 1000.0)
                 pygame.mixer.music.stop()
                 pygame.event.clear(SONG_END)  # stopping can post an end event; don't let it skip the next song
                 state.paused = False
@@ -837,6 +845,11 @@ def play_song(screen, songfile):
 
         pygame.display.flip()
         clock.tick(60)
+
+
+def previous_or_restart(seconds_in):
+    """What Previous means this far into a song: RESTART after the first few seconds, otherwise PREVIOUS."""
+    return RESTART if seconds_in > PREVIOUS_RESTART_SECONDS else PREVIOUS
 
 
 def previous_index(index, unplayable):
@@ -870,7 +883,9 @@ def run_playlist(screen, playlist):
             played += 1
             if result == QUIT:
                 break
-            if result == PREVIOUS:
+            if result == RESTART:
+                pass  # same index: the song starts over
+            elif result == PREVIOUS:
                 index = previous_index(index, now_playing.unplayable)
             else:  # ENDED or NEXT
                 index += 1
