@@ -46,6 +46,7 @@ While music plays, a panel in the top-left corner shows the playlist with the cu
 | Pause / resume | Pause / Resume | P |
 | Skip to the next song | Skip (>) | Right Arrow, > or N |
 | Hide / show the playlist panel | Show playlist (H), while hidden | H |
+| Change how the song name in the corner shows | Title: … (T), at the bottom of the panel | T |
 | Quit | Quit (Q) | Q, Esc, or close the window |
 
 **Previous** works like most music players: in the first 3 seconds of a song it goes back to the song before (skipping any that couldn't play), and after that it starts the current song over. On the first song it always starts over. The 3 seconds is set by `PREVIOUS_RESTART_SECONDS` in `musicolorizer.py`.
@@ -57,9 +58,11 @@ Pressing **Previous** or **Skip** while paused starts that song playing.
 ### Song name in the corner
 While a song plays, its name shows in the bottom-left corner, along with the artist when the file has an artist tag. Songs without tags show the title from the filename. The window title shows the same text.
 
-How long the name stays on screen is set by `TITLE_MODE` near the top of `musicolorizer.py`:
+How long the name stays on screen depends on the title mode. Press **T**, or click the **Title** button at the bottom of the playlist panel, to switch modes while a song plays: always, then fade, then cycle, then back to always. The button shows the current mode, and the new mode takes effect right away on the song that's playing and carries on to the next songs. T works while the panel is hidden, too.
 
-| `TITLE_MODE` | What happens |
+The app starts in the mode set by `TITLE_MODE` near the top of `musicolorizer.py`:
+
+| Mode | What happens |
 | --- | --- |
 | `'cycle'` (default) | Shows for 5 seconds, fades out, then comes back for 5 seconds every 27 seconds or so |
 | `'fade'` | Shows for 5 seconds at the start of the song, then fades out for good |
