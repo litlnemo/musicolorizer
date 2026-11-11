@@ -101,6 +101,6 @@ shapemap = {
                   'soar', 'summit', 'peak', 'sky', 'spire', 'rocket',
                   'flight', 'wing'],
     'rectangle': ['block', 'square', 'city', 'straight', 'steady',
-                  'brick', 'wall', 'solid', 'grid', 'ground', 'house',
-                  'street', 'stable'],
+                  'brick', 'wall', 'solid', 'grid', 'house', 'street',
+                  'stable'],
 }

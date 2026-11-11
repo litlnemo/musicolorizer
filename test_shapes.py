@@ -110,8 +110,8 @@ NEW_SHAPE_KEYWORDS = {
                   'circle', 'orb', 'velvet', 'silk', 'lullaby'],
     'tapered':   ['soar', 'summit', 'peak', 'sky', 'spire', 'rocket',
                   'flight', 'wing'],
-    'rectangle': ['brick', 'wall', 'solid', 'grid', 'ground', 'house',
-                  'street', 'stable'],
+    'rectangle': ['brick', 'wall', 'solid', 'grid', 'house', 'street',
+                  'stable'],
 }
 
 OLD_SHAPE_KEYWORDS = {
@@ -126,22 +126,14 @@ OLD_SHAPE_KEYWORDS = {
 def test_new_keywords_appended_after_existing_ones():
     for shape, old in OLD_SHAPE_KEYWORDS.items():
         assert shapemap[shape] == old + NEW_SHAPE_KEYWORDS[shape], shape
-    assert sum(len(new) for new in NEW_SHAPE_KEYWORDS.values()) == 44
+    assert sum(len(new) for new in NEW_SHAPE_KEYWORDS.values()) == 43
 
 
 def test_each_new_keyword_returns_its_shape():
     for shape, keywords in NEW_SHAPE_KEYWORDS.items():
         for keyword in keywords:
-            if keyword == 'ground':
-                continue  # contains 'round', see the next test
             for title in [keyword, keyword.title(), f"The {keyword.title()} Song"]:
                 assert get_shape(title) == shape, title
-
-
-def test_ground_matches_rounded_first():
-    # 'ground' contains 'round', and rounded comes before rectangle,
-    # so the first-match rule gives rounded (substring matching, issue #13)
-    assert get_shape("Common Ground") == "rounded"
 
 
 def test_new_keywords_examples_from_brief():
