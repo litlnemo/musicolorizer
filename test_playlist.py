@@ -138,7 +138,7 @@ def test_next_action_song_ended():
 
 def test_next_action_ignores_other_events():
     assert next_action(key(pygame.K_a)) is None
-    assert next_action(key(pygame.K_UP)) is None  # Left now means Previous (issue #19)
+    assert next_action(key(pygame.K_F2)) is None  # (Up used to be checked here; it scrolls the playlist since issue #36)
     assert next_action(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0))) is None
 
 

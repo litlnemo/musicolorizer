@@ -166,6 +166,19 @@ PAUSE = 'pause'
 TOGGLE_PANEL = 'toggle_panel'
 # Or switching how the corner title shows (always -> fade -> cycle -> always)
 CHANGE_TITLE_MODE = 'change_title_mode'
+# Scrolling the playlist (mouse wheel over the panel, or Up/Down) only changes which songs are visible.
+# This action is the pair (SCROLL, step), step +1 for one row later or -1 for one row earlier;
+# scroll_step() reads the step back out.
+SCROLL = 'scroll'
+
+
+def scroll_step(action):
+    """The step (+1 or -1) of a (SCROLL, step) action, or None if the action isn't a scroll."""
+    if isinstance(action, tuple) and len(action) == 2 and action[0] == SCROLL:
+        return action[1]
+    return None
+
+
 # The user clicked a song in the playlist panel. This action carries the song's index,
 # as the pair (JUMP, index); jump_target() reads the index back out.
 JUMP = 'jump'
@@ -411,12 +424,29 @@ class PlaybackState:
         # How the corner title shows ('always', 'fade' or 'cycle'). Starts as TITLE_MODE;
         # start() leaves it alone, so a mode picked with T carries on to the next song.
         self.title_mode = TITLE_MODE
+        # The first song row the panel shows once the user has scrolled, or None while the panel
+        # follows the current song (the window visible_range gives). See panel_window().
+        self.scroll_start = None
         self._titles = None  # filled in the first time the panel asks for titles
 
     def start(self, index):
-        """Make the song at index the current song. A new song always starts unpaused."""
+        """Make the song at index the current song. A new song always starts unpaused.
+        If the user scrolled the playlist and the new song is out of view, the panel goes back to following it;
+        if it's still in view, the panel stays where the user scrolled it."""
         self.index = index
         self.paused = False
+        if self.scroll_start is not None:
+            start, end = panel_window(self)
+            if not start <= index < end:
+                self.scroll_start = None
+
+    def scroll(self, step):
+        """Move the visible playlist window step rows later (or earlier, if negative), never past the first or
+        last song. Only what's visible changes; the playing song doesn't. Returns True if the window moved."""
+        start, _ = panel_window(self)
+        last_start = max(0, len(self.songs) - MAX_ROWS)
+        self.scroll_start = max(0, min(last_start, start + step))
+        return self.scroll_start != start
 
     def mark_unplayable(self, index):
         self.unplayable.add(index)
@@ -462,6 +492,16 @@ def visible_range(index, total, rows):
     return start, start + rows
 
 
+def panel_window(state):
+    """Which songs the panel shows, as (start, end): where the user scrolled to, or, until they scroll,
+    the window around the current song that visible_range gives."""
+    total = len(state.songs)
+    if state.scroll_start is None:
+        return visible_range(state.index, total, MAX_ROWS)
+    start = max(0, min(state.scroll_start, total - MAX_ROWS))
+    return start, min(total, start + MAX_ROWS)
+
+
 # ---------- On-screen controls ----------
 
 PANEL_MARGIN = 12
@@ -504,7 +544,7 @@ def row_layout(screen_size, state):
     x = PANEL_MARGIN + PANEL_PADDING
     # Below the buttons and the header line
     y = PANEL_MARGIN + PANEL_PADDING + BUTTON_HEIGHT + 8 + ROW_HEIGHT
-    start, end = visible_range(state.index, len(state.songs), MAX_ROWS)
+    start, end = panel_window(state)
     rows = {}
     for i in range(start, end):
         rows[i] = pygame.Rect(x - 4, y, width - 2 * PANEL_PADDING + 8, ROW_HEIGHT)
@@ -514,7 +554,7 @@ def row_layout(screen_size, state):
 
 def panel_row_count(state):
     """How many text rows the playlist panel shows under its header: the visible songs, plus "... N more" if there are more."""
-    start, end = visible_range(state.index, len(state.songs), MAX_ROWS)
+    start, end = panel_window(state)
     return (end - start) + (1 if len(state.songs) > end else 0)
 
 
@@ -529,6 +569,14 @@ def title_mode_layout(screen_size, state):
 def title_mode_label(mode):
     """The Title button's text, which is also where the current mode is always visible."""
     return f"Title: {mode} (T)"
+
+
+def panel_rect(screen_size, state):
+    """The whole playlist panel's area, or None while it's hidden. The mouse wheel scrolls the playlist only over it."""
+    if not state.panel_visible:
+        return None
+    bottom = title_mode_layout(screen_size, state).bottom + PANEL_PADDING
+    return pygame.Rect(PANEL_MARGIN, PANEL_MARGIN, panel_width(screen_size), bottom - PANEL_MARGIN)
 
 
 CHIP_LABEL = "Show playlist (H)"
@@ -613,15 +661,15 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
 
     buttons = control_layout(screen.get_size())
     width = panel_width(screen.get_size())
-    start, end = visible_range(state.index, len(state.songs), MAX_ROWS)
-    more = len(state.songs) - end
+    _, end = panel_window(state)
+    more = len(state.songs) - end  # songs below the visible window
     title_button = title_mode_layout(screen.get_size(), state)
-    height = title_button.bottom + PANEL_PADDING - PANEL_MARGIN
+    area = panel_rect(screen.get_size(), state)
 
     # Translucent background so the bars show through
-    panel = pygame.Surface((width, height), pygame.SRCALPHA)
+    panel = pygame.Surface(area.size, pygame.SRCALPHA)
     panel.fill((0, 0, 0, 170))
-    screen.blit(panel, (PANEL_MARGIN, PANEL_MARGIN))
+    screen.blit(panel, area.topleft)
 
     # Buttons
     labels = {PREVIOUS: "Prev (<)", PAUSE: "Resume (P)" if state.paused else "Pause (P)", NEXT: "Skip (>)", QUIT: "Quit (Q)"}
@@ -663,11 +711,13 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
 
 # ---------- Playback ----------
 
-def next_action(event, buttons=None, rows=None):
+def next_action(event, buttons=None, rows=None, panel=None):
     """Decide what an event means for playback: QUIT, NEXT, PREVIOUS, PAUSE, TOGGLE_PANEL, CHANGE_TITLE_MODE, ENDED,
     (JUMP, index), or None (keep playing).
     buttons is the {action: rect} map of what's clickable (from control_layout or draw_overlay), for mouse clicks.
-    rows is the {song index: rect} map of playlist rows (from row_layout); clicking one jumps to that song."""
+    rows is the {song index: rect} map of playlist rows (from row_layout); clicking one jumps to that song.
+    panel is the panel's rect (from panel_rect), or None while it's hidden; the mouse wheel scrolls only over it.
+    Up/Down and the wheel give (SCROLL, step)."""
     if event.type == pygame.QUIT:
         return QUIT
     if event.type == SONG_END:
@@ -686,6 +736,16 @@ def next_action(event, buttons=None, rows=None):
             return TOGGLE_PANEL
         if event.key == pygame.K_t:
             return CHANGE_TITLE_MODE
+        # Up and Down scroll the playlist (Left and Right stay Previous and Next)
+        if event.key == pygame.K_UP:
+            return (SCROLL, -1)
+        if event.key == pygame.K_DOWN:
+            return (SCROLL, 1)
+    if event.type == pygame.MOUSEWHEEL and panel is not None and event.y:
+        # Wheel events don't carry the mouse position, so ask where the mouse is (tests can give a pos)
+        pos = getattr(event, "pos", None) or pygame.mouse.get_pos()
+        if panel.collidepoint(pos):
+            return (SCROLL, 1 if event.y < 0 else -1)  # wheel down shows later songs
     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
         # Buttons are checked first, so a button always wins over a playlist row
         for action, rect in (buttons or {}).items():
@@ -896,6 +956,7 @@ def play_song(screen, songfile):
     fonts = load_fonts()
     buttons = control_layout(screen.get_size())
     rows = row_layout(screen.get_size(), state)
+    panel = panel_rect(screen.get_size(), state)
     # Bars are drawn on their own layer, so while paused the last frame can be shown again unchanged
     bar_layer = pygame.Surface(screen.get_size())
     clock = pygame.time.Clock()
@@ -903,7 +964,15 @@ def play_song(screen, songfile):
     # Run until the song ends, the user skips, or the user quits
     while True:
         for event in pygame.event.get():
-            action = next_action(event, buttons, rows)
+            action = next_action(event, buttons, rows, panel)
+            step = scroll_step(action)
+            if step is not None:
+                # Only what's visible changes; the song keeps playing. Up/Down do nothing while the panel is hidden.
+                if state.panel_visible:
+                    state.scroll(step)
+                    rows = row_layout(screen.get_size(), state)  # a click right after lands on the scrolled rows
+                    panel = panel_rect(screen.get_size(), state)
+                continue
             target = jump_target(action)
             if target is not None and target in state.unplayable:
                 continue  # clicking a song that can't play does nothing
@@ -936,6 +1005,7 @@ def play_song(screen, songfile):
         # What's clickable depends on whether the panel is showing, so take it from what was just drawn
         buttons = draw_overlay(screen, state, fonts, pygame.mouse.get_pos())
         rows = row_layout(screen.get_size(), state)
+        panel = panel_rect(screen.get_size(), state)
         # The corner text goes on the screen (not the bar layer), on top of the bars and panel.
         # Its timer is the song's play position, so it starts over for each song and holds while paused.
         # The mode is read every frame, so changing it with T takes effect right away.
