@@ -51,6 +51,38 @@ colormap = {
     'sun':       [(60, 30, 0),  (255, 230, 50)], # dark orange → bright warm yellow
     'sunshine':  [(60, 30, 0),  (255, 230, 50)], # dark orange → bright warm yellow
     'night':     [(5, 5, 20),   (40, 20, 80)],   # near black → deep indigo
+    # More colorways (issue #4): Wendi's picks
+    'shine':     [(50, 30, 0),  (255, 215, 60)], # dark amber → brilliant gold
+    'bright':    [(25, 25, 30), (255, 255, 245)],# dark grey → dazzling white
+    'glow':      [(50, 10, 0),  (255, 170, 60)], # dark ember → warm orange-gold
+    'wine':      [(25, 0, 10),  (160, 20, 50)],  # near-black burgundy → deep wine red
+    'earth':     [(30, 18, 8),  (190, 130, 80)], # dark soil brown → warm clay
+    'wedding':   [(45, 40, 50), (250, 245, 235)],# dark mauve-grey → ivory white
+    'marry':     [(50, 10, 25), (255, 180, 200)],# dark rose → soft blush pink
+    'twilight':  [(10, 5, 35),  (190, 130, 220)],# deep indigo → soft violet-pink
+    'light':     [(20, 25, 35), (245, 245, 255)],# dark slate → bright white
+    'sunset':    [(45, 10, 20), (255, 110, 80)], # dark plum-brown → fiery orange-pink
+    'sunrise':   [(25, 10, 30), (255, 190, 130)],# dark indigo-brown → warm gold-pink
+    'dusk':      [(15, 15, 30), (150, 130, 160)],# dark blue-grey → muted mauve
+    'retro':     [(15, 0, 25),  (255, 0, 160)],  # dark plum-black → vivid magenta
+    'moon':      [(5, 5, 25),   (220, 225, 255)],# dark navy → pale silver-blue
+    'desert':    [(55, 35, 10), (240, 200, 120)],# dark sand-brown → sun-bleached gold
+    # More colorways (issue #4): Mews's picks
+    'summer':    [(60, 25, 0),  (255, 180, 40)], # deep amber → sunny gold-orange
+    'autumn':    [(45, 15, 0),  (220, 100, 20)], # dark brown → burnt orange
+    'star':      [(10, 10, 20), (255, 245, 180)],# near-black → warm white-gold
+    'neon':      [(5, 0, 10),   (255, 0, 180)],  # black → hot pink
+    'crimson':   [(40, 0, 5),   (220, 20, 60)],  # dark maroon → true crimson
+    'lavender':  [(35, 25, 55), (210, 180, 250)],# dark grey-purple → soft lavender
+    'dance':     [(20, 0, 30),  (255, 80, 200)], # dark plum → bright fuchsia
+    'ember':     [(25, 5, 0),   (255, 120, 20)], # near-black red → glowing orange
+    'coral':     [(60, 15, 10), (255, 130, 110)],# dark coral-red → bright coral pink-orange
+    'mint':      [(10, 30, 25), (170, 255, 210)],# dark green-grey → fresh mint green
+    'peach':     [(60, 25, 10), (255, 200, 160)],# dark warm brown → soft peach
+    'velvet':    [(15, 0, 20),  (180, 30, 90)],  # near-black plum → rich purple-red
+    'cherry':    [(40, 0, 10),  (230, 30, 70)],  # dark red → bright cherry red
+    'disco':     [(10, 0, 25),  (255, 60, 220)], # dark purple-black → sparkling magenta
+    'aurora':    [(0, 20, 25),  (120, 255, 190)],# dark teal-black → shimmering green-violet
 }
 
 # Keyword-to-shape (order matters: if a title matches more than one shape,
