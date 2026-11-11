@@ -675,6 +675,144 @@ def test_restart_while_paused_plays_again(tmp_path, headless_screen, monkeypatch
     assert seen == [(0, True), (0, False)]  # same song, started over and playing
 
 
+# ---------- clicking a playlist song jumps to it (issue #18) ----------
+
+from musicolorizer import JUMP, jump_target, row_layout
+
+
+def record_rows(monkeypatch):
+    """Record (text, y) for every playlist row draw_overlay draws."""
+    drawn = []
+    real = musicolorizer.draw_text
+    monkeypatch.setattr(musicolorizer, "draw_text",
+                        lambda screen, fonts, kind, text, color, x, y, *rest, **kw:
+                        (kind == "row" and drawn.append((text, y))) or real(screen, fonts, kind, text, color, x, y, *rest, **kw))
+    return drawn
+
+
+@pytest.mark.parametrize("count, index", [(3, 0), (3, 2), (20, 5), (20, 19)])
+def test_row_rects_line_up_with_drawn_rows(offscreen, monkeypatch, count, index):
+    state = PlaybackState([f"Song {n}.mp3" for n in range(1, count + 1)])
+    state.start(index)
+    drawn = record_rows(monkeypatch)
+    draw_overlay(offscreen, state, musicolorizer.load_fonts())
+    rows = row_layout(offscreen.get_size(), state)
+
+    start, end = visible_range(index, count, musicolorizer.MAX_ROWS)
+    assert list(rows) == list(range(start, end))  # one rect per visible song, in order
+    song_rows = [(text, y) for text, y in drawn if not text.startswith("...")]
+    assert [text for text, _ in song_rows] == [f"{i + 1}. Song {i + 1}" for i in rows]
+    for (text, y), rect in zip(song_rows, rows.values()):
+        assert rect.y == y and rect.height == musicolorizer.ROW_HEIGHT
+    # The "... N more" line sits below the last row and isn't clickable
+    more = [y for text, y in drawn if text.startswith("...")]
+    if more:
+        assert more == [list(rows.values())[-1].bottom]
+
+
+def test_row_rects_sit_below_the_buttons_and_inside_the_panel():
+    for size in [(200, 150), (400, 300), (1600, 1000)]:
+        state = PlaybackState(["a.mp3", "b.mp3", "c.mp3"])
+        rows = row_layout(size, state)
+        lowest_button = max(rect.bottom for rect in control_layout(size).values())
+        panel_right = musicolorizer.PANEL_MARGIN + musicolorizer.panel_width(size)
+        for rect in rows.values():
+            assert rect.top > lowest_button
+            assert rect.right <= panel_right
+        tops = [rect.top for rect in rows.values()]
+        assert tops == sorted(tops) and len(set(tops)) == 3
+
+
+def test_no_row_rects_while_panel_hidden():
+    state = PlaybackState(["a.mp3", "b.mp3"])
+    state.toggle_panel()
+    assert row_layout((400, 300), state) == {}
+
+
+def test_row_click_maps_to_index():
+    state = PlaybackState([f"{n}.mp3" for n in range(20)])
+    state.start(10)
+    rows = row_layout((400, 300), state)
+    buttons = control_layout((400, 300))
+    for i, rect in rows.items():
+        assert next_action(click(rect.center), buttons, rows) == (JUMP, i)
+        assert next_action(click((rect.left + 1, rect.bottom - 1)), buttons, rows) == (JUMP, i)
+    assert next_action(click((390, 290)), buttons, rows) is None  # the bars still do nothing
+    right_click = pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=3, pos=rows[10].center)
+    assert next_action(right_click, buttons, rows) is None
+    assert next_action(click(rows[10].center), buttons) is None  # no rows given: no jump
+
+
+def test_buttons_win_over_rows():
+    same = pygame.Rect(0, 0, 50, 50)
+    assert next_action(click((10, 10)), {PAUSE: same}, {0: same}) == PAUSE
+
+
+def test_jump_target():
+    assert jump_target((JUMP, 3)) == 3
+    assert jump_target((JUMP, 0)) == 0
+    for action in (None, NEXT, QUIT, ENDED, PAUSE, TOGGLE_PANEL, "jump"):
+        assert jump_target(action) is None
+
+
+def test_jump_lands_on_that_song(monkeypatch):
+    played = scripted_player(monkeypatch, [(JUMP, 2), ENDED, QUIT])
+    assert run_playlist(None, ["/m/A.mp3", "/m/B.mp3", "/m/C.mp3", "/m/D.mp3"]) == 3
+    assert played == [0, 2, 3]  # after the jump, the playlist carries on from the clicked song
+
+
+def test_jump_back_to_an_earlier_song(monkeypatch):
+    played = scripted_player(monkeypatch, [ENDED, ENDED, (JUMP, 0), ENDED, QUIT])
+    assert run_playlist(None, ["/m/A.mp3", "/m/B.mp3", "/m/C.mp3"]) == 5
+    assert played == [0, 1, 2, 0, 1]
+
+
+def test_jump_to_current_song_restarts_it(monkeypatch):
+    played = scripted_player(monkeypatch, [ENDED, (JUMP, 1), QUIT])
+    assert run_playlist(None, ["/m/A.mp3", "/m/B.mp3", "/m/C.mp3"]) == 3
+    assert played == [0, 1, 1]
+
+
+def test_clicking_rows_in_a_real_playlist(tmp_path, headless_screen, monkeypatch):
+    songs = [make_tiny_wav(tmp_path / f"{name}.wav", seconds=2) for name in ("One", "Two", "Three")]
+    rows = row_layout(headless_screen.get_size(), PlaybackState(songs))
+    seen = []
+    real_draw = musicolorizer.draw_overlay
+    monkeypatch.setattr(musicolorizer, "draw_overlay",
+                        lambda screen, state, fonts, pos=(-1, -1): seen.append((state.index, state.paused)) or real_draw(screen, state, fonts, pos))
+    # Song 1 plays; click song 3; pause it; click song 3 again while paused (starts over, playing); quit
+    scripted_frames(monkeypatch, [[], [click(rows[2].center)], [key(pygame.K_p)], [click(rows[2].center)], [], [key(pygame.K_q)]])
+    assert run_playlist(headless_screen, songs) == 3
+    assert seen == [(0, False), (2, True), (2, False)]
+
+
+def test_clicking_an_unplayable_song_does_nothing(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "One.wav", seconds=2)
+    state = PlaybackState([song, str(tmp_path / "Broken.wav")])
+    state.mark_unplayable(1)
+    monkeypatch.setattr(musicolorizer, "now_playing", state)
+    rows = row_layout(headless_screen.get_size(), state)
+    scripted_frames(monkeypatch, [[], [click(rows[1].center)], [], [key(pygame.K_q)]])
+    assert play_song(headless_screen, song) == QUIT  # still on the same song when Q is pressed
+
+
+def test_play_song_returns_jump_for_a_row_click(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "One.wav", seconds=2)
+    state = PlaybackState([song, str(tmp_path / "Two.wav")])
+    monkeypatch.setattr(musicolorizer, "now_playing", state)
+    rows = row_layout(headless_screen.get_size(), state)
+    scripted_frames(monkeypatch, [[], [click(rows[1].center)]])
+    assert play_song(headless_screen, song) == (JUMP, 1)
+
+
+def test_row_clicks_ignored_while_panel_hidden(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "One.wav", seconds=2)
+    state = PlaybackState([song, str(tmp_path / "Two.wav")])
+    monkeypatch.setattr(musicolorizer, "now_playing", state)
+    where_row_was = row_layout(headless_screen.get_size(), state)[1].center
+    scripted_frames(monkeypatch, [[key(pygame.K_h)], [click(where_row_was)], [], [key(pygame.K_q)]])
+    assert play_song(headless_screen, song) == QUIT
+
 # ---------- changing the corner-title mode from the app (issue #21) ----------
 
 from musicolorizer import CHANGE_TITLE_MODE, TITLE_MODES, title_mode_label, title_mode_layout
@@ -836,3 +974,13 @@ def test_single_song_play_shows_now_playing(tmp_path, headless_screen, monkeypat
     assert run_playlist(headless_screen, [song]) == 1
     headers = [text for text in drawn if text.startswith(("Now playing", "Playlist:"))]
     assert headers == ["Now playing", "Now playing   PAUSED"]
+
+
+def test_title_button_and_rows_dont_overlap(offscreen):
+    for count in (1, 3, 20):
+        state = PlaybackState([f"{n}.mp3" for n in range(count)])
+        clickable = draw_overlay(offscreen, state, None)
+        rows = row_layout(offscreen.get_size(), state)
+        button = clickable[CHANGE_TITLE_MODE]
+        assert not any(button.colliderect(rect) for rect in rows.values())
+        assert next_action(click(button.center), clickable, rows) == CHANGE_TITLE_MODE

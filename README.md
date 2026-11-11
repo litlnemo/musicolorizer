@@ -53,6 +53,8 @@ While music plays, a panel in the top-left corner shows the playlist with the cu
 
 Pressing **Previous** or **Skip** while paused starts that song playing.
 
+**Clicking a song** in the playlist jumps to it, and the playlist carries on from there. Clicking the song that's playing starts it over, and clicking one marked "can't play" does nothing.
+
 **Hiding the panel** gives the visualizer the whole window. While it's hidden, a small "Show playlist (H)" button sits in the top-left corner; click it or press H to bring the panel back. All the keys keep working while the panel is hidden, and a hidden panel stays hidden from song to song. Each new playlist starts with the panel showing.
 
 ### Song name in the corner

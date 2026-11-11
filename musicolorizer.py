@@ -166,6 +166,16 @@ PAUSE = 'pause'
 TOGGLE_PANEL = 'toggle_panel'
 # Or switching how the corner title shows (always -> fade -> cycle -> always)
 CHANGE_TITLE_MODE = 'change_title_mode'
+# The user clicked a song in the playlist panel. This action carries the song's index,
+# as the pair (JUMP, index); jump_target() reads the index back out.
+JUMP = 'jump'
+
+
+def jump_target(action):
+    """The song index a (JUMP, index) action goes to, or None if the action isn't a jump."""
+    if isinstance(action, tuple) and len(action) == 2 and action[0] == JUMP:
+        return action[1]
+    return None
 
 
 def clean_path(path):
@@ -484,6 +494,24 @@ def control_layout(screen_size):
     return rects
 
 
+def row_layout(screen_size, state):
+    """Where each visible playlist row is, as {song index: pygame.Rect}, or {} while the panel is hidden.
+    draw_overlay draws the rows in these rects and clicks are checked against the same rects,
+    so a click always lands on the row it looks like it's on. The "... N more" line isn't a row."""
+    if not state.panel_visible:
+        return {}
+    width = panel_width(screen_size)
+    x = PANEL_MARGIN + PANEL_PADDING
+    # Below the buttons and the header line
+    y = PANEL_MARGIN + PANEL_PADDING + BUTTON_HEIGHT + 8 + ROW_HEIGHT
+    start, end = visible_range(state.index, len(state.songs), MAX_ROWS)
+    rows = {}
+    for i in range(start, end):
+        rows[i] = pygame.Rect(x - 4, y, width - 2 * PANEL_PADDING + 8, ROW_HEIGHT)
+        y += ROW_HEIGHT
+    return rows
+
+
 def panel_row_count(state):
     """How many text rows the playlist panel shows under its header: the visible songs, plus "... N more" if there are more."""
     start, end = visible_range(state.index, len(state.songs), MAX_ROWS)
@@ -578,8 +606,8 @@ def panel_header(state):
 
 def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     """Draw the playlist panel and control buttons over the bars. Returns {action: rect} for whatever
-    is clickable right now: the Prev/Pause/Skip/Quit buttons and the Title button, or just the
-    "Show playlist" chip if the panel is hidden."""
+    button is clickable right now: the Prev/Pause/Skip/Quit buttons and the Title button, or just the
+    "Show playlist" chip if the panel is hidden. The playlist rows are clickable too; their rects come from row_layout."""
     if not state.panel_visible:
         return draw_chip(screen, fonts, mouse_pos)
 
@@ -608,9 +636,11 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     y += ROW_HEIGHT
 
     titles = state.titles
-    for i in range(start, end):
+    # Each row is drawn in its rect from row_layout, the same rects clicks are checked against
+    for i, row in row_layout(screen.get_size(), state).items():
+        y = row.y
         if i == state.index:
-            pygame.draw.rect(screen, (60, 60, 75), (x - 4, y + 1, width - 2 * PANEL_PADDING + 8, ROW_HEIGHT - 2), border_radius=4)
+            pygame.draw.rect(screen, (60, 60, 75), row.inflate(0, -2), border_radius=4)
             # A small "playing" triangle in front of the current song
             cy = y + ROW_HEIGHT // 2
             pygame.draw.polygon(screen, (255, 255, 255), [(x, cy - 6), (x, cy + 6), (x + 10, cy)])
@@ -621,7 +651,7 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
             color = (190, 190, 190)
         label = f"{i + 1}. {titles[i]}" + ("  (can't play)" if i in state.unplayable else "")
         draw_text(screen, fonts, "row", label, color, x + 18, y, text_width)
-        y += ROW_HEIGHT
+        y = row.bottom
     if more:
         draw_text(screen, fonts, "row", f"... {more} more", (130, 130, 130), x + 18, y, text_width)
 
@@ -633,10 +663,11 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
 
 # ---------- Playback ----------
 
-def next_action(event, buttons=None):
+def next_action(event, buttons=None, rows=None):
     """Decide what an event means for playback: QUIT, NEXT, PREVIOUS, PAUSE, TOGGLE_PANEL, CHANGE_TITLE_MODE, ENDED,
-    or None (keep playing).
-    buttons is the {action: rect} map of what's clickable (from control_layout or draw_overlay), for mouse clicks."""
+    (JUMP, index), or None (keep playing).
+    buttons is the {action: rect} map of what's clickable (from control_layout or draw_overlay), for mouse clicks.
+    rows is the {song index: rect} map of playlist rows (from row_layout); clicking one jumps to that song."""
     if event.type == pygame.QUIT:
         return QUIT
     if event.type == SONG_END:
@@ -655,10 +686,14 @@ def next_action(event, buttons=None):
             return TOGGLE_PANEL
         if event.key == pygame.K_t:
             return CHANGE_TITLE_MODE
-    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and buttons:
-        for action, rect in buttons.items():
+    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        # Buttons are checked first, so a button always wins over a playlist row
+        for action, rect in (buttons or {}).items():
             if rect.collidepoint(event.pos):
                 return action
+        for index, rect in (rows or {}).items():
+            if rect.collidepoint(event.pos):
+                return (JUMP, index)
     return None
 
 
@@ -823,7 +858,7 @@ def draw_title(screen, image, alpha):
 
 def play_song(screen, songfile):
     """Analyze and visualize one song until it ends, is skipped, or the user quits.
-    Returns ENDED, NEXT, PREVIOUS, RESTART, QUIT, or UNPLAYABLE."""
+    Returns ENDED, NEXT, PREVIOUS, RESTART, QUIT, UNPLAYABLE, or (JUMP, index) when a playlist row was clicked."""
     if not os.path.isfile(songfile):
         print(f"Can't find {songfile}. Skipping it.")
         return UNPLAYABLE
@@ -860,6 +895,7 @@ def play_song(screen, songfile):
 
     fonts = load_fonts()
     buttons = control_layout(screen.get_size())
+    rows = row_layout(screen.get_size(), state)
     # Bars are drawn on their own layer, so while paused the last frame can be shown again unchanged
     bar_layer = pygame.Surface(screen.get_size())
     clock = pygame.time.Clock()
@@ -867,7 +903,10 @@ def play_song(screen, songfile):
     # Run until the song ends, the user skips, or the user quits
     while True:
         for event in pygame.event.get():
-            action = next_action(event, buttons)
+            action = next_action(event, buttons, rows)
+            target = jump_target(action)
+            if target is not None and target in state.unplayable:
+                continue  # clicking a song that can't play does nothing
             if action == PAUSE:
                 if state.toggle_pause():
                     pygame.mixer.music.pause()
@@ -896,6 +935,7 @@ def play_song(screen, songfile):
         screen.blit(bar_layer, (0, 0))
         # What's clickable depends on whether the panel is showing, so take it from what was just drawn
         buttons = draw_overlay(screen, state, fonts, pygame.mouse.get_pos())
+        rows = row_layout(screen.get_size(), state)
         # The corner text goes on the screen (not the bar layer), on top of the bars and panel.
         # Its timer is the song's play position, so it starts over for each song and holds while paused.
         # The mode is read every frame, so changing it with T takes effect right away.
@@ -920,7 +960,7 @@ def previous_index(index, unplayable):
 
 
 def run_playlist(screen, playlist):
-    """Play the songs in order, going back a song on Previous. Returns how many times a song actually played
+    """Play the songs in order, going back a song on Previous and jumping to a song when its row is clicked. Returns how many times a song actually played
     (0 means none of them could play)."""
     global now_playing
     now_playing = PlaybackState(playlist)
@@ -941,7 +981,10 @@ def run_playlist(screen, playlist):
             played += 1
             if result == QUIT:
                 break
-            if result == RESTART:
+            target = jump_target(result)
+            if target is not None:
+                index = target  # a clicked song plays next; clicking the current song starts it over
+            elif result == RESTART:
                 pass  # same index: the song starts over
             elif result == PREVIOUS:
                 index = previous_index(index, now_playing.unplayable)
