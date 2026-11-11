@@ -458,8 +458,10 @@ def test_draw_overlay_visible_unchanged(offscreen, monkeypatch):
     drawn = record_text(monkeypatch)
     clickable = draw_overlay(offscreen, state, musicolorizer.load_fonts())
     # Same buttons and rows as before the toggle existed, and no chip
-    assert clickable == control_layout(offscreen.get_size())
-    assert drawn == ["Prev (<)", "Pause (P)", "Skip (>)", "Quit (Q)", "Playlist: 1 of 2", "1. One", "2. Two"]
+    # (plus the Title mode button at the bottom of the panel, added for issue #21)
+    assert clickable == {**control_layout(offscreen.get_size()),
+                         musicolorizer.CHANGE_TITLE_MODE: musicolorizer.title_mode_layout(offscreen.get_size(), state)}
+    assert drawn == ["Prev (<)", "Pause (P)", "Skip (>)", "Quit (Q)", "Playlist: 1 of 2", "1. One", "2. Two", "Title: cycle (T)"]
 
 
 def test_chip_is_hit_testable(offscreen):
@@ -811,6 +813,123 @@ def test_row_clicks_ignored_while_panel_hidden(tmp_path, headless_screen, monkey
     scripted_frames(monkeypatch, [[key(pygame.K_h)], [click(where_row_was)], [], [key(pygame.K_q)]])
     assert play_song(headless_screen, song) == QUIT
 
+# ---------- changing the corner-title mode from the app (issue #21) ----------
+
+from musicolorizer import CHANGE_TITLE_MODE, TITLE_MODES, title_mode_label, title_mode_layout
+
+
+def test_title_mode_starts_as_title_mode_constant():
+    assert PlaybackState(["a.mp3"]).title_mode == musicolorizer.TITLE_MODE == "cycle"
+
+
+def test_title_mode_cycles_in_order():
+    state = PlaybackState(["a.mp3"])
+    state.title_mode = "always"
+    assert [state.next_title_mode() for _ in range(6)] == ["fade", "cycle", "always", "fade", "cycle", "always"]
+    # From the default 'cycle', the next press goes to 'always'
+    assert PlaybackState(["a.mp3"]).next_title_mode() == "always"
+
+
+def test_title_mode_carries_on_to_the_next_song():
+    state = PlaybackState(["a.mp3", "b.mp3"])
+    state.next_title_mode()
+    state.start(1)
+    assert state.title_mode == "always"
+
+
+def test_next_action_t_key_changes_title_mode():
+    assert next_action(key(pygame.K_t)) == CHANGE_TITLE_MODE
+
+
+@pytest.mark.parametrize("mode", TITLE_MODES)
+def test_title_button_label_matches_mode(offscreen, monkeypatch, mode):
+    state = PlaybackState(["One.mp3", "Two.mp3"])
+    state.title_mode = mode
+    drawn = record_text(monkeypatch)
+    draw_overlay(offscreen, state, musicolorizer.load_fonts())
+    assert drawn[-1] == title_mode_label(mode) == f"Title: {mode} (T)"
+
+
+def test_title_button_is_clickable_and_inside_the_panel(offscreen):
+    for count in (1, 3, 20):
+        state = PlaybackState([f"{n}.mp3" for n in range(count)])
+        clickable = draw_overlay(offscreen, state, None)
+        button = clickable[CHANGE_TITLE_MODE]
+        assert next_action(click(button.center), clickable) == CHANGE_TITLE_MODE
+        # Below the playlist rows, not in the full top row
+        assert button.top > max(rect.bottom for rect in control_layout(offscreen.get_size()).values())
+        rows_bottom = musicolorizer.PANEL_MARGIN + musicolorizer.PANEL_PADDING + musicolorizer.BUTTON_HEIGHT + 8 \
+            + musicolorizer.ROW_HEIGHT * (1 + musicolorizer.panel_row_count(state))
+        assert button.top >= rows_bottom
+        assert button.right <= musicolorizer.PANEL_MARGIN + musicolorizer.panel_width(offscreen.get_size())
+
+
+def test_title_button_fits_in_small_window_and_label_fits_at_full_size():
+    for size in [(200, 150), (400, 300), (1600, 1000)]:
+        rect = title_mode_layout(size, PlaybackState(["a.mp3"]))
+        assert rect.width > 0 and rect.right <= size[0]
+    pygame.font.init()
+    try:
+        fonts = musicolorizer.load_fonts()
+        rect = title_mode_layout((1600, 1000), PlaybackState(["a.mp3"]))
+        for mode in TITLE_MODES:
+            assert fonts["control"].size(title_mode_label(mode))[0] <= rect.width - 8  # no "..."
+    finally:
+        pygame.font.quit()
+
+
+def test_title_button_hides_with_the_panel(offscreen):
+    state = PlaybackState(["a.mp3"])
+    state.toggle_panel()
+    assert CHANGE_TITLE_MODE not in draw_overlay(offscreen, state, None)
+
+
+def record_title_modes(monkeypatch):
+    """Record the mode play_song asks title_alpha for on each frame."""
+    modes = []
+    real_alpha = musicolorizer.title_alpha
+    monkeypatch.setattr(musicolorizer, "title_alpha", lambda t, mode=None: modes.append(mode) or real_alpha(t, mode))
+    return modes
+
+
+def test_t_changes_the_mode_mid_song(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "Happy.wav", seconds=2)
+    modes = record_title_modes(monkeypatch)
+    t = key(pygame.K_t)
+    scripted_frames(monkeypatch, [[], [t], [], [t], [t], [key(pygame.K_q)]])
+    assert play_song(headless_screen, song) == QUIT
+    # title_alpha follows the live mode from the very next frame, on the song already playing
+    assert modes == ["cycle", "always", "always", "fade", "cycle"]
+
+
+def test_t_works_while_the_panel_is_hidden(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "Happy.wav", seconds=2)
+    modes = record_title_modes(monkeypatch)
+    scripted_frames(monkeypatch, [[key(pygame.K_h)], [key(pygame.K_t)], [key(pygame.K_q)]])
+    assert play_song(headless_screen, song) == QUIT
+    assert modes == ["cycle", "always"]
+
+
+def test_clicking_the_title_button_changes_the_mode(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "Happy.wav", seconds=2)
+    state = PlaybackState([song])
+    monkeypatch.setattr(musicolorizer, "now_playing", state)
+    modes = record_title_modes(monkeypatch)
+    drawn = record_text(monkeypatch)
+    button = title_mode_layout(headless_screen.get_size(), state)
+    scripted_frames(monkeypatch, [[], [click(button.center)], [click(button.center)], [key(pygame.K_q)]])
+    assert play_song(headless_screen, song) == QUIT
+    assert modes == ["cycle", "always", "fade"]
+    assert [text for text in drawn if text.startswith("Title:")] == ["Title: cycle (T)", "Title: always (T)", "Title: fade (T)"]
+
+
+def test_title_mode_keeps_through_the_playlist(tmp_path, headless_screen, monkeypatch):
+    songs = [make_tiny_wav(tmp_path / f"{name}.wav", seconds=2) for name in ("One", "Two")]
+    modes = record_title_modes(monkeypatch)
+    scripted_frames(monkeypatch, [[key(pygame.K_t)], [key(pygame.K_n)], [], [key(pygame.K_q)]])
+    run_playlist(headless_screen, songs)
+    assert modes == ["always", "always"]  # song 2 starts in the mode picked on song 1
+
 # ---------- one song isn't a playlist (issue #23) ----------
 
 from musicolorizer import panel_header
@@ -855,3 +974,13 @@ def test_single_song_play_shows_now_playing(tmp_path, headless_screen, monkeypat
     assert run_playlist(headless_screen, [song]) == 1
     headers = [text for text in drawn if text.startswith(("Now playing", "Playlist:"))]
     assert headers == ["Now playing", "Now playing   PAUSED"]
+
+
+def test_title_button_and_rows_dont_overlap(offscreen):
+    for count in (1, 3, 20):
+        state = PlaybackState([f"{n}.mp3" for n in range(count)])
+        clickable = draw_overlay(offscreen, state, None)
+        rows = row_layout(offscreen.get_size(), state)
+        button = clickable[CHANGE_TITLE_MODE]
+        assert not any(button.colliderect(rect) for rect in rows.values())
+        assert next_action(click(button.center), clickable, rows) == CHANGE_TITLE_MODE

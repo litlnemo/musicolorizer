@@ -25,6 +25,7 @@ hop_length = 512
 #   'always' - visible for the whole song
 #   'fade'   - shown at the start of the song, then fades out for good
 #   'cycle'  - shown at the start, fades out, then comes back now and then
+# This is the mode the app starts in; T (or the "Title" button in the panel) changes it while playing.
 TITLE_MODE = 'cycle'
 TITLE_SHOW_SECONDS = 5     # how long the text stays at full strength
 TITLE_FADE_SECONDS = 1     # how long each fade out (or back in) takes
@@ -163,6 +164,8 @@ PREVIOUS_RESTART_SECONDS = 3
 PAUSE = 'pause'
 # Neither does hiding or showing the playlist panel
 TOGGLE_PANEL = 'toggle_panel'
+# Or switching how the corner title shows (always -> fade -> cycle -> always)
+CHANGE_TITLE_MODE = 'change_title_mode'
 # The user clicked a song in the playlist panel. This action carries the song's index,
 # as the pair (JUMP, index); jump_target() reads the index back out.
 JUMP = 'jump'
@@ -405,6 +408,9 @@ class PlaybackState:
         # A new playlist always starts with the panel showing, so nobody gets stuck with it hidden.
         # start() leaves this alone, so a hidden panel stays hidden from one song to the next.
         self.panel_visible = True
+        # How the corner title shows ('always', 'fade' or 'cycle'). Starts as TITLE_MODE;
+        # start() leaves it alone, so a mode picked with T carries on to the next song.
+        self.title_mode = TITLE_MODE
         self._titles = None  # filled in the first time the panel asks for titles
 
     def start(self, index):
@@ -424,6 +430,12 @@ class PlaybackState:
         """Hide the playlist panel if it's showing, or show it if it's hidden. Returns True if now showing."""
         self.panel_visible = not self.panel_visible
         return self.panel_visible
+
+    def next_title_mode(self):
+        """Switch the corner title to the next mode, always -> fade -> cycle -> always. Returns the new mode."""
+        position = TITLE_MODES.index(self.title_mode) if self.title_mode in TITLE_MODES else -1
+        self.title_mode = TITLE_MODES[(position + 1) % len(TITLE_MODES)]
+        return self.title_mode
 
     @property
     def current_song(self):
@@ -455,6 +467,9 @@ def visible_range(index, total, rows):
 PANEL_MARGIN = 12
 PANEL_PADDING = 10
 BUTTON_HEIGHT = 34
+# The smaller "Title: cycle (T)" button at the bottom of the panel
+TITLE_BUTTON_HEIGHT = 26
+TITLE_BUTTON_WIDTH = 150
 BUTTON_GAP = 8
 ROW_HEIGHT = 24
 MAX_ROWS = 8
@@ -497,6 +512,25 @@ def row_layout(screen_size, state):
     return rows
 
 
+def panel_row_count(state):
+    """How many text rows the playlist panel shows under its header: the visible songs, plus "... N more" if there are more."""
+    start, end = visible_range(state.index, len(state.songs), MAX_ROWS)
+    return (end - start) + (1 if len(state.songs) > end else 0)
+
+
+def title_mode_layout(screen_size, state):
+    """Where the "Title: <mode> (T)" button goes: its own line at the bottom of the panel, under the playlist.
+    (The top row is full with Prev, Pause, Skip and Quit.)"""
+    y = PANEL_MARGIN + PANEL_PADDING + BUTTON_HEIGHT + 8 + ROW_HEIGHT + panel_row_count(state) * ROW_HEIGHT + BUTTON_GAP
+    width = min(TITLE_BUTTON_WIDTH, panel_width(screen_size) - 2 * PANEL_PADDING)
+    return pygame.Rect(PANEL_MARGIN + PANEL_PADDING, y, max(1, width), TITLE_BUTTON_HEIGHT)
+
+
+def title_mode_label(mode):
+    """The Title button's text, which is also where the current mode is always visible."""
+    return f"Title: {mode} (T)"
+
+
 CHIP_LABEL = "Show playlist (H)"
 CHIP_WIDTH = 170
 
@@ -536,6 +570,19 @@ def shorten_to_width(font, text, max_width):
     return text.rstrip() + "..."
 
 
+def draw_button(screen, fonts, rect, label, mouse_pos=(-1, -1), active=False):
+    """Draw one panel button: rounded, grey, lighter under the mouse, blue while active (e.g. Pause while paused)."""
+    if active:
+        fill = (70, 110, 190)
+    elif rect.collidepoint(mouse_pos):
+        fill = (95, 95, 95)
+    else:
+        fill = (55, 55, 55)
+    pygame.draw.rect(screen, fill, rect, border_radius=6)
+    pygame.draw.rect(screen, (150, 150, 150), rect, width=1, border_radius=6)
+    draw_text(screen, fonts, "control", label, (235, 235, 235), 0, 0, rect.width - 8, center_in=rect)
+
+
 def draw_text(screen, fonts, kind, text, color, x, y, max_width, center_in=None):
     if not fonts:
         return
@@ -559,8 +606,8 @@ def panel_header(state):
 
 def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     """Draw the playlist panel and control buttons over the bars. Returns {action: rect} for whatever
-    button is clickable right now: the Prev/Pause/Skip/Quit buttons, or just the "Show playlist" chip if the panel is hidden.
-    The playlist rows are clickable too; their rects come from row_layout."""
+    button is clickable right now: the Prev/Pause/Skip/Quit buttons and the Title button, or just the
+    "Show playlist" chip if the panel is hidden. The playlist rows are clickable too; their rects come from row_layout."""
     if not state.panel_visible:
         return draw_chip(screen, fonts, mouse_pos)
 
@@ -568,8 +615,8 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     width = panel_width(screen.get_size())
     start, end = visible_range(state.index, len(state.songs), MAX_ROWS)
     more = len(state.songs) - end
-    rows = (end - start) + (1 if more else 0)
-    height = 2 * PANEL_PADDING + BUTTON_HEIGHT + 8 + ROW_HEIGHT + rows * ROW_HEIGHT
+    title_button = title_mode_layout(screen.get_size(), state)
+    height = title_button.bottom + PANEL_PADDING - PANEL_MARGIN
 
     # Translucent background so the bars show through
     panel = pygame.Surface((width, height), pygame.SRCALPHA)
@@ -579,15 +626,7 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     # Buttons
     labels = {PREVIOUS: "Prev (<)", PAUSE: "Resume (P)" if state.paused else "Pause (P)", NEXT: "Skip (>)", QUIT: "Quit (Q)"}
     for action, rect in buttons.items():
-        if action == PAUSE and state.paused:
-            fill = (70, 110, 190)
-        elif rect.collidepoint(mouse_pos):
-            fill = (95, 95, 95)
-        else:
-            fill = (55, 55, 55)
-        pygame.draw.rect(screen, fill, rect, border_radius=6)
-        pygame.draw.rect(screen, (150, 150, 150), rect, width=1, border_radius=6)
-        draw_text(screen, fonts, "control", labels[action], (235, 235, 235), 0, 0, rect.width - 8, center_in=rect)
+        draw_button(screen, fonts, rect, labels[action], mouse_pos, active=(action == PAUSE and state.paused))
 
     # Playlist header and rows
     x = PANEL_MARGIN + PANEL_PADDING
@@ -616,13 +655,16 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     if more:
         draw_text(screen, fonts, "row", f"... {more} more", (130, 130, 130), x + 18, y, text_width)
 
-    return buttons
+    # The corner title's mode, on its own line at the bottom of the panel
+    draw_button(screen, fonts, title_button, title_mode_label(state.title_mode), mouse_pos)
+
+    return {**buttons, CHANGE_TITLE_MODE: title_button}
 
 
 # ---------- Playback ----------
 
 def next_action(event, buttons=None, rows=None):
-    """Decide what an event means for playback: QUIT, NEXT, PREVIOUS, PAUSE, TOGGLE_PANEL, ENDED,
+    """Decide what an event means for playback: QUIT, NEXT, PREVIOUS, PAUSE, TOGGLE_PANEL, CHANGE_TITLE_MODE, ENDED,
     (JUMP, index), or None (keep playing).
     buttons is the {action: rect} map of what's clickable (from control_layout or draw_overlay), for mouse clicks.
     rows is the {song index: rect} map of playlist rows (from row_layout); clicking one jumps to that song."""
@@ -642,6 +684,8 @@ def next_action(event, buttons=None, rows=None):
             return PAUSE
         if event.key == pygame.K_h:
             return TOGGLE_PANEL
+        if event.key == pygame.K_t:
+            return CHANGE_TITLE_MODE
     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
         # Buttons are checked first, so a button always wins over a playlist row
         for action, rect in (buttons or {}).items():
@@ -870,6 +914,8 @@ def play_song(screen, songfile):
                     pygame.mixer.music.unpause()
             elif action == TOGGLE_PANEL:
                 state.toggle_panel()
+            elif action == CHANGE_TITLE_MODE:
+                state.next_title_mode()  # the corner title follows it from the next frame on
             elif action:
                 if action == PREVIOUS:
                     # Read the position before stopping (it holds still while paused)
@@ -892,7 +938,8 @@ def play_song(screen, songfile):
         rows = row_layout(screen.get_size(), state)
         # The corner text goes on the screen (not the bar layer), on top of the bars and panel.
         # Its timer is the song's play position, so it starts over for each song and holds while paused.
-        draw_title(screen, title_image, title_alpha(max(0, pygame.mixer.music.get_pos()) / 1000.0))
+        # The mode is read every frame, so changing it with T takes effect right away.
+        draw_title(screen, title_image, title_alpha(max(0, pygame.mixer.music.get_pos()) / 1000.0, state.title_mode))
 
         pygame.display.flip()
         clock.tick(60)
