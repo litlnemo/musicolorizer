@@ -38,7 +38,7 @@ python musicolorizer.py ~/Music/Playlist
 Songs that can't be found are listed before the window opens, and songs that can't be read are skipped (and marked "can't play" in the playlist).
 
 ### Controls
-While music plays, a panel in the top-left corner shows the playlist with the current song highlighted, plus buttons for the controls. Use the buttons or the keyboard:
+While music plays, a panel in the top-left corner shows the playlist with the current song highlighted, plus buttons for the controls. Its top line says which song is playing, as "Playlist: 3 of 12", or just "Now playing" when you picked a single song, and adds "PAUSED" while the music is paused. Use the buttons or the keyboard:
 
 | Action | Button | Keys |
 | --- | --- | --- |
@@ -155,22 +155,52 @@ The colormap (in `colormap.py`) is a dictionary listing keywords that may be fou
 | rain | dark grey-blue → muted steel blue |
 | sun, sunshine | dark orange → bright warm yellow |
 | night | near black → deep indigo |
+| shine | dark amber → brilliant gold |
+| bright | dark grey → dazzling white |
+| glow | dark ember → warm orange-gold |
+| wine | near-black burgundy → deep wine red |
+| earth | dark soil brown → warm clay |
+| wedding | dark mauve-grey → ivory white |
+| marry | dark rose → soft blush pink |
+| twilight | deep indigo → soft violet-pink |
+| light | dark slate → bright white |
+| sunset | dark plum-brown → fiery orange-pink |
+| sunrise | dark indigo-brown → warm gold-pink |
+| dusk | dark blue-grey → muted mauve |
+| retro | dark plum-black → vivid magenta |
+| moon | dark navy → pale silver-blue |
+| desert | dark sand-brown → sun-bleached gold |
+| summer | deep amber → sunny gold-orange |
+| autumn | dark brown → burnt orange |
+| star | near-black → warm white-gold |
+| neon | black → hot pink |
+| crimson | dark maroon → true crimson |
+| lavender | dark grey-purple → soft lavender |
+| dance | dark plum → bright fuchsia |
+| ember | near-black red → glowing orange |
+| coral | dark coral-red → bright coral pink-orange |
+| mint | dark green-grey → fresh mint green |
+| peach | dark warm brown → soft peach |
+| velvet | near-black plum → rich purple-red |
+| cherry | dark red → bright cherry red |
+| disco | dark purple-black → sparkling magenta |
+| aurora | dark teal-black → shimmering green-violet |
 
 ### `get_colorway`, `pick_color_for_bar`, `random_color`
 These functions search the song's title (case-insensitively) for every colormap keyword that appears in it. If a title matches more than one keyword, each bar picks one of the matching colorways at random (`pick_color_for_bar`), so "Blue Love Song" mixes blue and pink bars. If nothing matches, the song gets a random colorway.
 
-Keywords currently match anywhere inside the title, even inside other words (so "red" also matches "tired"). Matching whole words only is [issue #13](https://github.com/litlnemo/musicolorizer/issues/13).
+Keywords currently match anywhere inside the title, even inside other words (so "red" also matches "tired", and "Sunset" gets both the sun and sunset colorways). Matching whole words only is [issue #13](https://github.com/litlnemo/musicolorizer/issues/13).
 
 ### Shapes and `get_shape`
 Song titles also choose the shape of the bars. The shape map (also in `colormap.py`) lists keywords for each shape:
 
 | Shape | Keywords |
 | --- | --- |
-| triangle | sharp, knife, edge, blade, cut, pointed |
-| wavy | wave, ocean, sea, river, rain, water, flow |
-| rounded | soft, gentle, cloud, pillow, dream, round |
-| tapered | tall, rise, climb, mountain, tower, reach |
-| rectangle | block, square, city, straight, steady |
+| triangle | sharp, knife, edge, blade, cut, pointed, spike, thorn, razor, jagged, arrow, fang, claw, diamond |
+| wavy | wave, ocean, sea, river, rain, water, flow, stream, tide, surf, ripple, current, drift, float, sway, cascade, brook |
+| rounded | soft, gentle, cloud, pillow, dream, round, smooth, mellow, tender, bubble, balloon, circle, orb, velvet, silk, lullaby |
+| tapered | tall, rise, climb, mountain, tower, reach, soar, summit, peak, sky, spire, rocket, flight, wing |
+| rectangle | block, square, city, straight, steady, brick, wall, solid, grid, house, street, stable |
 
 `get_shape` uses the same case-insensitive matching as `get_colorway`. If a title matches keywords for more than one shape, the first shape in the table wins. If nothing matches, the song gets a random shape. Every bar in a song has the same shape.
 
@@ -195,7 +225,9 @@ The `main` function controls the overall operation of the program. It gets the s
 ### `run_playlist` and `PlaybackState`
 `run_playlist` steps through the playlist by index, so it can go back as well as forward. After each song it moves on to the next one, goes back one (Previous), plays the same song again (Previous after the first 3 seconds), or stops (Quit). Songs that couldn't be read are skipped, and aren't tried again.
 
-`PlaybackState` keeps track of what the playlist panel needs: the songs, which one is current, which couldn't play, whether the music is paused, and whether the panel is showing.
+`PlaybackState` keeps track of what the playlist panel needs: the songs, which one is current, which couldn't play, whether the music is paused, whether the panel is showing, the corner-title mode, and where the playlist is scrolled to.
+
+`run_playlist` also handles a click on a song in the panel: it jumps straight to that song and carries on from there.
 
 ### `play_song`
 `play_song` handles one song from start to finish:
@@ -208,7 +240,9 @@ The `main` function controls the overall operation of the program. It gets the s
 While paused, the bars hold still and the music position stops too, so everything picks up in sync on resume.
 
 ### The playlist panel
-`draw_overlay` draws the panel: the four buttons (laid out by `control_layout`), then the playlist, scrolled so the current song stays near the top of a long list. When the panel is hidden it draws only the small "Show playlist (H)" button instead (`draw_chip`). Either way it returns what can be clicked right now, which `play_song` uses to tell which button a click landed on.
+`draw_overlay` draws the panel: the header line (`panel_header`), the four buttons (laid out by `control_layout`), the playlist rows, and the Title button at the bottom (`title_mode_layout`). A long playlist shows 8 rows at a time (`panel_window`): it follows the current song until you scroll, and goes back to following it when the playing song moves out of view. When the panel is hidden it draws only the small "Show playlist (H)" button instead (`draw_chip`). Either way it returns the buttons that can be clicked right now.
+
+Drawing and clicking share the same layout functions, so a click always lands on what's drawn: `play_song` gives `next_action` the song rows from `row_layout`, to tell which song was clicked, and the panel area from `panel_rect`, to tell whether the mouse wheel is over the panel.
 
 ## Examples
 **Keyword: "love"**
@@ -236,16 +270,17 @@ Some choices were made out of frustration, some because I am still new to this a
 - Varying the shapes, chosen by keywords in the title
 - The artist and song name in the corner
 - Matching colors and shapes against the title tag, not just the filename
+- Clicking a song in the playlist to jump to it
+- Scrolling a long playlist with the mouse wheel or the arrow keys
+- Choosing the corner-title display mode from the window (the T key or the Title button)
+- Thirty more colorways and more shape keywords
 
 Still to do (see the [open issues](https://github.com/litlnemo/musicolorizer/issues)):
 
 - Overlaying lyrics
 - Apple Music integration, and an animated mode for streaming tracks that can't be analyzed
-- Clicking a song in the playlist to jump to it
 - Supporting .m4a files
 - Matching whole words only in titles
-- Choosing the corner-title display mode from the window instead of the code
-- More colorways
 - ...and more that I'm probably forgetting now!
 
 Other choices were done because I wanted them!
