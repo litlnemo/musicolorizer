@@ -47,6 +47,7 @@ While music plays, a panel in the top-left corner shows the playlist with the cu
 | Skip to the next song | Skip (>) | Right Arrow, > or N |
 | Hide / show the playlist panel | Show playlist (H), while hidden | H |
 | Change how the song name in the corner shows | Title: … (T), at the bottom of the panel | T |
+| Scroll the playlist | Mouse wheel over the panel | Up / Down Arrow |
 | Quit | Quit (Q) | Q, Esc, or close the window |
 
 **Previous** works like most music players: in the first 3 seconds of a song it goes back to the song before (skipping any that couldn't play), and after that it starts the current song over. On the first song it always starts over. The 3 seconds is set by `PREVIOUS_RESTART_SECONDS` in `musicolorizer.py`.
@@ -54,6 +55,8 @@ While music plays, a panel in the top-left corner shows the playlist with the cu
 Pressing **Previous** or **Skip** while paused starts that song playing.
 
 **Clicking a song** in the playlist jumps to it, and the playlist carries on from there. Clicking the song that's playing starts it over, and clicking one marked "can't play" does nothing.
+
+**Scrolling** shows songs further down a long playlist (the panel shows 8 at a time) without changing what's playing, so you can click any song. If the playing song moves out of view, the panel follows it again.
 
 **Hiding the panel** gives the visualizer the whole window. While it's hidden, a small "Show playlist (H)" button sits in the top-left corner; click it or press H to bring the panel back. All the keys keep working while the panel is hidden, and a hidden panel stays hidden from song to song. Each new playlist starts with the panel showing.
 

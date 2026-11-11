@@ -984,3 +984,197 @@ def test_title_button_and_rows_dont_overlap(offscreen):
         button = clickable[CHANGE_TITLE_MODE]
         assert not any(button.colliderect(rect) for rect in rows.values())
         assert next_action(click(button.center), clickable, rows) == CHANGE_TITLE_MODE
+
+
+# ---------- scrolling the playlist (issue #36) ----------
+
+from musicolorizer import MAX_ROWS, SCROLL, panel_rect, panel_window, scroll_step
+
+
+def wheel(y, pos):
+    return pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=y, pos=pos)
+
+
+def long_state(count=20):
+    return PlaybackState([f"Song {n}.mp3" for n in range(1, count + 1)])
+
+
+def test_window_starts_where_it_always_did():
+    for count in (3, 8, 20):
+        state = long_state(count)
+        assert state.scroll_start is None
+        assert panel_window(state) == visible_range(0, count, MAX_ROWS)
+    # Until the user scrolls, the window follows the playing song exactly as before
+    state = long_state()
+    state.start(5)
+    assert panel_window(state) == visible_range(5, 20, MAX_ROWS) == (3, 11)
+
+
+def test_scroll_moves_one_row_and_clamps():
+    state = long_state(20)
+    assert state.scroll(-1) is False and panel_window(state) == (0, 8)  # already at the top
+    assert state.scroll(1) is True and panel_window(state) == (1, 9)
+    assert state.scroll(1) is True and panel_window(state) == (2, 10)
+    for _ in range(30):
+        state.scroll(1)
+    assert panel_window(state) == (12, 20)  # never past the last song
+    assert state.scroll(1) is False
+    for _ in range(30):
+        state.scroll(-1)
+    assert panel_window(state) == (0, 8)
+    assert state.index == 0  # scrolling never changes the playing song
+
+
+def test_nothing_to_scroll_with_eight_or_fewer_songs():
+    for count in (1, 5, 8):
+        state = long_state(count)
+        assert state.scroll(1) is False and state.scroll(-1) is False
+        assert panel_window(state) == (0, count)
+
+
+def test_more_line_shrinks_as_you_scroll(offscreen, monkeypatch):
+    state = long_state(10)
+    drawn = record_text(monkeypatch)
+    draw_overlay(offscreen, state, musicolorizer.load_fonts())
+    assert "... 2 more" in drawn
+    state.scroll(1)
+    drawn.clear()
+    draw_overlay(offscreen, state, musicolorizer.load_fonts())
+    assert "... 1 more" in drawn and "2. Song 2" in drawn and "1. Song 1" not in drawn
+    state.scroll(1)
+    drawn.clear()
+    draw_overlay(offscreen, state, musicolorizer.load_fonts())
+    assert not any(text.startswith("...") for text in drawn)  # at the bottom: no "more" line
+    assert "10. Song 10" in drawn
+
+
+def test_rows_follow_the_scrolled_window(offscreen, monkeypatch):
+    state = long_state(20)
+    for _ in range(5):
+        state.scroll(1)
+    drawn = record_rows(monkeypatch)
+    draw_overlay(offscreen, state, musicolorizer.load_fonts())
+    rows = row_layout(offscreen.get_size(), state)
+    assert list(rows) == list(range(5, 13))
+    song_rows = [(text, y) for text, y in drawn if not text.startswith("...")]
+    assert [text for text, _ in song_rows] == [f"{i + 1}. Song {i + 1}" for i in rows]
+    assert [y for _, y in song_rows] == [rect.y for rect in rows.values()]
+    # A click on a scrolled-to row jumps to that song
+    assert next_action(click(rows[12].center), control_layout(offscreen.get_size()), rows) == (musicolorizer.JUMP, 12)
+
+
+def test_up_down_keys_scroll():
+    assert next_action(key(pygame.K_DOWN)) == (SCROLL, 1)
+    assert next_action(key(pygame.K_UP)) == (SCROLL, -1)
+    assert next_action(key(pygame.K_LEFT)) == PREVIOUS and next_action(key(pygame.K_RIGHT)) == NEXT  # unchanged
+
+
+def test_wheel_scrolls_only_over_the_panel():
+    state = long_state(20)
+    panel = panel_rect((400, 600), state)
+    inside, outside = panel.center, (panel.right + 5, panel.bottom + 5)
+    assert next_action(wheel(-1, inside), panel=panel) == (SCROLL, 1)    # wheel down: later songs
+    assert next_action(wheel(1, inside), panel=panel) == (SCROLL, -1)    # wheel up: earlier songs
+    assert next_action(wheel(-3, inside), panel=panel) == (SCROLL, 1)    # one row per wheel event
+    assert next_action(wheel(-1, outside), panel=panel) is None
+    assert next_action(wheel(-1, inside), panel=None) is None            # panel hidden
+    assert next_action(wheel(0, inside), panel=panel) is None
+
+
+def test_scroll_step():
+    assert scroll_step((SCROLL, 1)) == 1 and scroll_step((SCROLL, -1)) == -1
+    for action in (None, NEXT, QUIT, (musicolorizer.JUMP, 3), "scroll"):
+        assert scroll_step(action) is None
+
+
+def test_panel_rect_covers_the_drawn_panel(offscreen):
+    for count in (1, 3, 20):
+        state = long_state(count)
+        area = panel_rect(offscreen.get_size(), state)
+        clickable = draw_overlay(offscreen, state, None)
+        for rect in list(clickable.values()) + list(row_layout(offscreen.get_size(), state).values()):
+            assert area.contains(rect.clip(area)) and rect.colliderect(area)
+        assert area.bottom >= clickable[musicolorizer.CHANGE_TITLE_MODE].bottom
+    hidden = long_state(3)
+    hidden.toggle_panel()
+    assert panel_rect((400, 300), hidden) is None
+
+
+def test_window_stays_while_playing_song_is_visible_and_follows_it_when_it_leaves():
+    state = long_state(20)
+    state.scroll(1)
+    state.scroll(1)                         # showing songs 2-9 (indexes 2-9)
+    state.start(3)                          # still visible: the window stays put
+    assert panel_window(state) == (2, 10)
+    state.start(9)
+    assert panel_window(state) == (2, 10)
+    state.start(10)                         # out of view: back to following the song
+    assert panel_window(state) == visible_range(10, 20, MAX_ROWS) == (8, 16)
+    assert state.scroll_start is None
+    # Scrolled well past the playing song, then Previous/jump back to an earlier song: it follows
+    for _ in range(10):
+        state.scroll(1)
+    state.start(1)
+    assert panel_window(state) == visible_range(1, 20, MAX_ROWS)
+
+
+def test_scrolling_in_play_song_keeps_playing(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "One.wav", seconds=2)
+    state = PlaybackState([song] + [str(tmp_path / f"Song {n}.wav") for n in range(2, 21)])
+    monkeypatch.setattr(musicolorizer, "now_playing", state)
+    seen = []
+    real_draw = musicolorizer.draw_overlay
+    monkeypatch.setattr(musicolorizer, "draw_overlay",
+                        lambda screen, st, fonts, pos=(-1, -1): seen.append(panel_window(st)) or real_draw(screen, st, fonts, pos))
+    stops = []
+    monkeypatch.setattr(pygame.mixer.music, "stop", lambda: stops.append(1))
+    inside = panel_rect(headless_screen.get_size(), state).center
+    scripted_frames(monkeypatch, [[], [key(pygame.K_DOWN)], [wheel(-1, inside)], [key(pygame.K_UP)],
+                                  [wheel(-1, (390, 290))], [key(pygame.K_q)]])
+    assert play_song(headless_screen, song) == QUIT
+    assert seen == [(0, 8), (1, 9), (2, 10), (1, 9), (1, 9)]  # the wheel outside the panel did nothing
+    assert stops == [1] and state.index == 0  # only Q stopped the song; scrolling never changed it
+
+
+def test_scroll_then_click_a_song_reached_by_scrolling(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "One.wav", seconds=2)
+    state = PlaybackState([song] + [str(tmp_path / f"Song {n}.wav") for n in range(2, 13)])
+    monkeypatch.setattr(musicolorizer, "now_playing", state)
+    # Where song 12 (index 11) will be once the window is scrolled to the bottom
+    scrolled = PlaybackState(state.songs)
+    for _ in range(4):
+        scrolled.scroll(1)
+    target = row_layout(headless_screen.get_size(), scrolled)[11].center
+    down = key(pygame.K_DOWN)
+    scripted_frames(monkeypatch, [[], [down, down, down, down, click(target)]])
+    assert play_song(headless_screen, song) == (musicolorizer.JUMP, 11)
+
+
+def test_up_down_do_nothing_while_panel_hidden(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "One.wav", seconds=2)
+    state = PlaybackState([song] + [str(tmp_path / f"Song {n}.wav") for n in range(2, 21)])
+    monkeypatch.setattr(musicolorizer, "now_playing", state)
+    scripted_frames(monkeypatch, [[key(pygame.K_h)], [key(pygame.K_DOWN), key(pygame.K_DOWN)], [key(pygame.K_q)]])
+    assert play_song(headless_screen, song) == QUIT
+    assert state.scroll_start is None and panel_window(state) == (0, 8)
+
+
+def test_window_follows_skips_in_a_real_playlist(monkeypatch):
+    # While scrolled down, skipping until the playing song leaves the window brings the window back to it
+    windows = []
+
+    def fake_play(screen, songfile):
+        state = musicolorizer.now_playing
+        if state.index == 4:
+            state.scroll(1)                 # while song 5 plays, the user scrolls one row: indexes 3-10 show
+        windows.append((state.index, panel_window(state)))
+        return NEXT if state.index < 12 else QUIT
+
+    monkeypatch.setattr(musicolorizer, "play_song", fake_play)
+    run_playlist(None, [f"/m/{n}.mp3" for n in range(20)])
+    by_index = dict(windows)
+    assert by_index[0] == (0, 8)            # before any scrolling, the window follows as always
+    assert by_index[4] == (3, 11)
+    assert by_index[5] == (3, 11)           # playing song visible: window stays where scrolled
+    assert by_index[10] == (3, 11)
+    assert by_index[11] == visible_range(11, 20, MAX_ROWS)  # left the window: follows it again
