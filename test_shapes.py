@@ -97,3 +97,54 @@ def test_play_song_uses_title_shape(tmp_path, monkeypatch):
         assert shapes_used == ["triangle"]
     finally:
         pygame.quit()
+
+
+# ---------- more shape keywords (brief 19) ----------
+
+NEW_SHAPE_KEYWORDS = {
+    'triangle':  ['spike', 'thorn', 'razor', 'jagged', 'arrow', 'fang',
+                  'claw', 'diamond'],
+    'wavy':      ['stream', 'tide', 'surf', 'ripple', 'current', 'drift',
+                  'float', 'sway', 'cascade', 'brook'],
+    'rounded':   ['smooth', 'mellow', 'tender', 'bubble', 'balloon',
+                  'circle', 'orb', 'velvet', 'silk', 'lullaby'],
+    'tapered':   ['soar', 'summit', 'peak', 'sky', 'spire', 'rocket',
+                  'flight', 'wing'],
+    'rectangle': ['brick', 'wall', 'solid', 'grid', 'house', 'street',
+                  'stable'],
+}
+
+OLD_SHAPE_KEYWORDS = {
+    'triangle':  ['sharp', 'knife', 'edge', 'blade', 'cut', 'pointed'],
+    'wavy':      ['wave', 'ocean', 'sea', 'river', 'rain', 'water', 'flow'],
+    'rounded':   ['soft', 'gentle', 'cloud', 'pillow', 'dream', 'round'],
+    'tapered':   ['tall', 'rise', 'climb', 'mountain', 'tower', 'reach'],
+    'rectangle': ['block', 'square', 'city', 'straight', 'steady'],
+}
+
+
+def test_new_keywords_appended_after_existing_ones():
+    for shape, old in OLD_SHAPE_KEYWORDS.items():
+        assert shapemap[shape] == old + NEW_SHAPE_KEYWORDS[shape], shape
+    assert sum(len(new) for new in NEW_SHAPE_KEYWORDS.values()) == 43
+
+
+def test_each_new_keyword_returns_its_shape():
+    for shape, keywords in NEW_SHAPE_KEYWORDS.items():
+        for keyword in keywords:
+            for title in [keyword, keyword.title(), f"The {keyword.title()} Song"]:
+                assert get_shape(title) == shape, title
+
+
+def test_new_keywords_examples_from_brief():
+    assert get_shape("Spike") == "triangle"
+    assert get_shape("Balloon") == "rounded"
+    # substring matching, as before
+    assert get_shape("Peaked") == "tapered"
+    assert get_shape("Orbit") == "rounded"
+
+
+def test_existing_keywords_keep_their_shapes():
+    for shape, keywords in OLD_SHAPE_KEYWORDS.items():
+        for keyword in keywords:
+            assert get_shape(keyword.title()) == shape, keyword
