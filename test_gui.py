@@ -671,3 +671,49 @@ def test_restart_while_paused_plays_again(tmp_path, headless_screen, monkeypatch
     scripted_frames(monkeypatch, [[key(pygame.K_p)], [key(pygame.K_COMMA)], [], [key(pygame.K_q)]])
     assert run_playlist(headless_screen, songs) == 2
     assert seen == [(0, True), (0, False)]  # same song, started over and playing
+
+
+# ---------- one song isn't a playlist (issue #23) ----------
+
+from musicolorizer import panel_header
+
+
+def test_header_for_one_song_says_now_playing():
+    state = PlaybackState(["/m/Almost Blue.mp3"])
+    assert panel_header(state) == "Now playing"
+    state.toggle_pause()
+    assert panel_header(state) == "Now playing   PAUSED"
+
+
+def test_header_for_several_songs_is_unchanged():
+    state = PlaybackState(["a.mp3", "b.mp3", "c.mp3"])
+    assert panel_header(state) == "Playlist: 1 of 3"
+    state.start(2)
+    assert panel_header(state) == "Playlist: 3 of 3"
+    state.toggle_pause()
+    assert panel_header(state) == "Playlist: 3 of 3   PAUSED"
+    assert panel_header(PlaybackState(["a.mp3", "b.mp3"])) == "Playlist: 1 of 2"
+
+
+@pytest.mark.parametrize("songs, paused, expected", [
+    (["One.mp3"], False, "Now playing"),
+    (["One.mp3"], True, "Now playing   PAUSED"),
+    (["One.mp3", "Two.mp3"], False, "Playlist: 1 of 2"),
+    (["One.mp3", "Two.mp3"], True, "Playlist: 1 of 2   PAUSED"),
+])
+def test_panel_draws_the_header(offscreen, monkeypatch, songs, paused, expected):
+    state = PlaybackState(songs)
+    state.paused = paused
+    drawn = record_text(monkeypatch)
+    draw_overlay(offscreen, state, musicolorizer.load_fonts())
+    assert drawn[4] == expected  # right after the four buttons
+    assert "1. One" in drawn  # the song row itself is still listed
+
+
+def test_single_song_play_shows_now_playing(tmp_path, headless_screen, monkeypatch):
+    song = make_tiny_wav(tmp_path / "Happy.wav", seconds=2)
+    drawn = record_text(monkeypatch)
+    scripted_frames(monkeypatch, [[], [key(pygame.K_p)], [key(pygame.K_q)]])
+    assert run_playlist(headless_screen, [song]) == 1
+    headers = [text for text in drawn if text.startswith(("Now playing", "Playlist:"))]
+    assert headers == ["Now playing", "Now playing   PAUSED"]

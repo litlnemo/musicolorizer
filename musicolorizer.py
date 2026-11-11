@@ -519,6 +519,16 @@ def draw_text(screen, fonts, kind, text, color, x, y, max_width, center_in=None)
         screen.blit(image, (x, y + (ROW_HEIGHT - image.get_height()) // 2))
 
 
+def panel_header(state):
+    """The line above the playlist rows: "Playlist: N of M", or "Now playing" when there's only one song
+    (one song isn't a playlist). "   PAUSED" is added while paused."""
+    if len(state.songs) == 1:
+        header = "Now playing"
+    else:
+        header = f"Playlist: {state.index + 1} of {len(state.songs)}"
+    return header + ("   PAUSED" if state.paused else "")
+
+
 def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     """Draw the playlist panel and control buttons over the bars. Returns {action: rect} for whatever
     is clickable right now: the Pause/Skip/Quit buttons, or just the "Show playlist" chip if the panel is hidden."""
@@ -554,8 +564,7 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     x = PANEL_MARGIN + PANEL_PADDING
     text_width = width - 2 * PANEL_PADDING - 18
     y = PANEL_MARGIN + PANEL_PADDING + BUTTON_HEIGHT + 8
-    header = f"Playlist: {state.index + 1} of {len(state.songs)}" + ("   PAUSED" if state.paused else "")
-    draw_text(screen, fonts, "header", header, (160, 160, 160), x, y, width - 2 * PANEL_PADDING)
+    draw_text(screen, fonts, "header", panel_header(state), (160, 160, 160), x, y, width - 2 * PANEL_PADDING)
     y += ROW_HEIGHT
 
     titles = state.titles
