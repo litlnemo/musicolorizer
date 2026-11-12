@@ -171,6 +171,9 @@ VOLUME_UP, VOLUME_DOWN = 'volume_up', 'volume_down'
 VOLUME_STEP = 0.05  # how much one press of + or - changes the volume (0.0 silent to 1.0 full)
 # Or turning shuffle on or off (S)
 TOGGLE_SHUFFLE = 'toggle_shuffle'
+# Or switching the repeat mode (R): off -> all -> one -> off
+CYCLE_REPEAT = 'cycle_repeat'
+REPEAT_MODES = ('off', 'all', 'one')
 # Scrolling the playlist (mouse wheel over the panel, or Up/Down) only changes which songs are visible.
 # This action is the pair (SCROLL, step), step +1 for one row later or -1 for one row earlier;
 # scroll_step() reads the step back out.
@@ -438,6 +441,9 @@ class PlaybackState:
         # history is every song index played so far, in the order they played, so Previous can go back through it.
         self.shuffle = False
         self.history = []
+        # Repeat: 'off' (the playlist ends after the last song), 'all' (it starts over from the first song),
+        # or 'one' (a song that finishes plays again)
+        self.repeat = 'off'
         self._titles = None  # filled in the first time the panel asks for titles
 
     def start(self, index):
@@ -480,6 +486,11 @@ class PlaybackState:
         """Turn shuffle on if it's off, or off if it's on. Returns True if now shuffling."""
         self.shuffle = not self.shuffle
         return self.shuffle
+
+    def next_repeat(self):
+        """Switch to the next repeat mode, off -> all -> one -> off. Returns the new mode."""
+        self.repeat = REPEAT_MODES[(REPEAT_MODES.index(self.repeat) + 1) % len(REPEAT_MODES)]
+        return self.repeat
 
     def shuffle_back(self):
         """The song that played before the current one, taken off the history (so Previous again goes further back),
@@ -606,11 +617,13 @@ def title_mode_label(mode):
 
 
 def status_text(state):
-    """The status line under the Title button: the volume as a percent, plus "Shuffle" while shuffling,
-    e.g. "Vol: 80% · Shuffle"."""
+    """The status line under the Title button: the volume as a percent, plus "Shuffle" while shuffling and the
+    repeat mode while it's on, e.g. "Vol: 80% · Shuffle · Repeat: all"."""
     parts = [f"Vol: {int(round(state.volume * 100))}%"]
     if state.shuffle:
         parts.append("Shuffle")
+    if state.repeat != 'off':
+        parts.append(f"Repeat: {state.repeat}")
     return " · ".join(parts)
 
 
@@ -767,7 +780,7 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
 
 def next_action(event, buttons=None, rows=None, panel=None):
     """Decide what an event means for playback: QUIT, NEXT, PREVIOUS, PAUSE, TOGGLE_PANEL, CHANGE_TITLE_MODE,
-    VOLUME_UP, VOLUME_DOWN, TOGGLE_SHUFFLE, ENDED, (JUMP, index), or None (keep playing).
+    VOLUME_UP, VOLUME_DOWN, TOGGLE_SHUFFLE, CYCLE_REPEAT, ENDED, (JUMP, index), or None (keep playing).
     buttons is the {action: rect} map of what's clickable (from control_layout or draw_overlay), for mouse clicks.
     rows is the {song index: rect} map of playlist rows (from draw_overlay, or row_layout before the first frame);
     clicking one jumps to that song.
@@ -798,6 +811,8 @@ def next_action(event, buttons=None, rows=None, panel=None):
             return VOLUME_DOWN
         if event.key == pygame.K_s:
             return TOGGLE_SHUFFLE
+        if event.key == pygame.K_r:
+            return CYCLE_REPEAT
         # Up and Down scroll the playlist (Left and Right stay Previous and Next)
         if event.key == pygame.K_UP:
             return (SCROLL, -1)
@@ -1105,6 +1120,8 @@ def play_song(screen, songfile):
                 pygame.mixer.music.set_volume(state.volume)
             elif action == TOGGLE_SHUFFLE:
                 state.toggle_shuffle()  # the song keeps playing; run_playlist picks what comes after it
+            elif action == CYCLE_REPEAT:
+                state.next_repeat()  # the song keeps playing; run_playlist uses the mode when it ends
             elif action:
                 if action == PREVIOUS:
                     # Read the position before stopping (it holds still while paused)
@@ -1161,11 +1178,23 @@ def random_next(index, total, unplayable):
 
 def next_index(index, state):
     """Where the playlist goes after song index ends or is skipped: the next song in playlist order,
-    or a random one while shuffling. A result past the last song ends the playlist."""
+    or a random one while shuffling. With repeat 'all', the last song is followed by the first.
+    A result past the last song ends the playlist."""
     if state.shuffle:
         target = random_next(index, len(state.songs), state.unplayable)
         return len(state.songs) if target is None else target
-    return index + 1
+    following = index + 1
+    if following >= len(state.songs) and state.repeat == 'all':
+        return 0  # the loop skips any songs that can't play
+    return following
+
+
+def after_song(index, result, state):
+    """Where the playlist goes after song index returns ENDED or NEXT. Repeat 'one' plays a song that finished again
+    (even while shuffling); skipping always moves on."""
+    if result == ENDED and state.repeat == 'one':
+        return index
+    return next_index(index, state)
 
 
 def run_playlist(screen, playlist):
@@ -1177,6 +1206,8 @@ def run_playlist(screen, playlist):
     index = 0
     try:
         while index < len(playlist):
+            if len(now_playing.unplayable) >= len(playlist):
+                break  # nothing left that can play (stops repeat 'all' from going round forever)
             # Coming forward again after going back: don't retry a song that already couldn't play
             if index in now_playing.unplayable:
                 index = next_index(index, now_playing)
@@ -1200,7 +1231,7 @@ def run_playlist(screen, playlist):
                 earlier = now_playing.shuffle_back() if now_playing.shuffle else None
                 index = earlier if earlier is not None else previous_index(index, now_playing.unplayable)
             else:  # ENDED or NEXT
-                index = next_index(index, now_playing)
+                index = after_song(index, result, now_playing)
     finally:
         now_playing = None
     return played
