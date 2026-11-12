@@ -169,6 +169,8 @@ CHANGE_TITLE_MODE = 'change_title_mode'
 # Or turning the volume up (+) or down (-)
 VOLUME_UP, VOLUME_DOWN = 'volume_up', 'volume_down'
 VOLUME_STEP = 0.05  # how much one press of + or - changes the volume (0.0 silent to 1.0 full)
+# Or turning shuffle on or off (S)
+TOGGLE_SHUFFLE = 'toggle_shuffle'
 # Scrolling the playlist (mouse wheel over the panel, or Up/Down) only changes which songs are visible.
 # This action is the pair (SCROLL, step), step +1 for one row later or -1 for one row earlier;
 # scroll_step() reads the step back out.
@@ -432,6 +434,10 @@ class PlaybackState:
         self.scroll_start = None
         # The music volume, 0.0 (silent) to 1.0 (full). start() leaves it alone, so it carries on to the next song.
         self.volume = 1.0
+        # Shuffle plays the songs in a random order (the panel still lists them in playlist order).
+        # history is every song index played so far, in the order they played, so Previous can go back through it.
+        self.shuffle = False
+        self.history = []
         self._titles = None  # filled in the first time the panel asks for titles
 
     def start(self, index):
@@ -440,6 +446,8 @@ class PlaybackState:
         if it's still in view, the panel stays where the user scrolled it."""
         self.index = index
         self.paused = False
+        if not self.history or self.history[-1] != index:  # starting a song over doesn't add it twice
+            self.history.append(index)
         if self.scroll_start is not None:
             start, end = panel_window(self)
             if not start <= index < end:
@@ -455,6 +463,8 @@ class PlaybackState:
 
     def mark_unplayable(self, index):
         self.unplayable.add(index)
+        if self.history and self.history[-1] == index:
+            self.history.pop()  # it never really played, so Previous shouldn't go back to it
 
     def toggle_pause(self):
         """Flip between paused and playing. Returns True if now paused."""
@@ -465,6 +475,19 @@ class PlaybackState:
         """Hide the playlist panel if it's showing, or show it if it's hidden. Returns True if now showing."""
         self.panel_visible = not self.panel_visible
         return self.panel_visible
+
+    def toggle_shuffle(self):
+        """Turn shuffle on if it's off, or off if it's on. Returns True if now shuffling."""
+        self.shuffle = not self.shuffle
+        return self.shuffle
+
+    def shuffle_back(self):
+        """The song that played before the current one, taken off the history (so Previous again goes further back),
+        or None if the current song was the first one played."""
+        if len(self.history) < 2:
+            return None
+        self.history.pop()          # the current song; start() adds it back if it plays again
+        return self.history.pop()   # the one before it; start() adds it back when it plays
 
     def change_volume(self, step):
         """Turn the volume up (step > 0) or down (step < 0), never below 0.0 or above 1.0. Returns the new volume."""
@@ -583,8 +606,12 @@ def title_mode_label(mode):
 
 
 def status_text(state):
-    """The status line under the Title button: the volume as a percent, e.g. "Vol: 80%"."""
-    return f"Vol: {int(round(state.volume * 100))}%"
+    """The status line under the Title button: the volume as a percent, plus "Shuffle" while shuffling,
+    e.g. "Vol: 80% · Shuffle"."""
+    parts = [f"Vol: {int(round(state.volume * 100))}%"]
+    if state.shuffle:
+        parts.append("Shuffle")
+    return " · ".join(parts)
 
 
 def status_layout(screen_size, state):
@@ -740,7 +767,7 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
 
 def next_action(event, buttons=None, rows=None, panel=None):
     """Decide what an event means for playback: QUIT, NEXT, PREVIOUS, PAUSE, TOGGLE_PANEL, CHANGE_TITLE_MODE,
-    VOLUME_UP, VOLUME_DOWN, ENDED, (JUMP, index), or None (keep playing).
+    VOLUME_UP, VOLUME_DOWN, TOGGLE_SHUFFLE, ENDED, (JUMP, index), or None (keep playing).
     buttons is the {action: rect} map of what's clickable (from control_layout or draw_overlay), for mouse clicks.
     rows is the {song index: rect} map of playlist rows (from draw_overlay, or row_layout before the first frame);
     clicking one jumps to that song.
@@ -769,6 +796,8 @@ def next_action(event, buttons=None, rows=None, panel=None):
             return VOLUME_UP
         if event.key in (pygame.K_MINUS, pygame.K_KP_MINUS) or getattr(event, "unicode", "") == "-":
             return VOLUME_DOWN
+        if event.key == pygame.K_s:
+            return TOGGLE_SHUFFLE
         # Up and Down scroll the playlist (Left and Right stay Previous and Next)
         if event.key == pygame.K_UP:
             return (SCROLL, -1)
@@ -1074,6 +1103,8 @@ def play_song(screen, songfile):
                 # Like Pause, the song keeps playing
                 state.change_volume(VOLUME_STEP if action == VOLUME_UP else -VOLUME_STEP)
                 pygame.mixer.music.set_volume(state.volume)
+            elif action == TOGGLE_SHUFFLE:
+                state.toggle_shuffle()  # the song keeps playing; run_playlist picks what comes after it
             elif action:
                 if action == PREVIOUS:
                     # Read the position before stopping (it holds still while paused)
@@ -1119,9 +1150,27 @@ def previous_index(index, unplayable):
     return index
 
 
+def random_next(index, total, unplayable):
+    """Shuffle's next song after index: a random song that can play, never the one at index.
+    If index is the only song that can play, it plays again; if no song can play, None."""
+    others = [i for i in range(total) if i != index and i not in unplayable]
+    if others:
+        return random.choice(others)
+    return index if index not in unplayable else None
+
+
+def next_index(index, state):
+    """Where the playlist goes after song index ends or is skipped: the next song in playlist order,
+    or a random one while shuffling. A result past the last song ends the playlist."""
+    if state.shuffle:
+        target = random_next(index, len(state.songs), state.unplayable)
+        return len(state.songs) if target is None else target
+    return index + 1
+
+
 def run_playlist(screen, playlist):
-    """Play the songs in order, going back a song on Previous and jumping to a song when its row is clicked. Returns how many times a song actually played
-    (0 means none of them could play)."""
+    """Play the songs in order (or shuffled), going back a song on Previous and jumping to a song when its row is clicked.
+    Returns how many times a song actually played (0 means none of them could play)."""
     global now_playing
     now_playing = PlaybackState(playlist)
     played = 0
@@ -1130,13 +1179,13 @@ def run_playlist(screen, playlist):
         while index < len(playlist):
             # Coming forward again after going back: don't retry a song that already couldn't play
             if index in now_playing.unplayable:
-                index += 1
+                index = next_index(index, now_playing)
                 continue
             now_playing.start(index)
             result = play_song(screen, playlist[index])
             if result == UNPLAYABLE:
                 now_playing.mark_unplayable(index)
-                index += 1
+                index = next_index(index, now_playing)
                 continue
             played += 1
             if result == QUIT:
@@ -1147,9 +1196,11 @@ def run_playlist(screen, playlist):
             elif result == RESTART:
                 pass  # same index: the song starts over
             elif result == PREVIOUS:
-                index = previous_index(index, now_playing.unplayable)
+                # While shuffling, Previous goes back to the song that played before this one
+                earlier = now_playing.shuffle_back() if now_playing.shuffle else None
+                index = earlier if earlier is not None else previous_index(index, now_playing.unplayable)
             else:  # ENDED or NEXT
-                index += 1
+                index = next_index(index, now_playing)
     finally:
         now_playing = None
     return played
