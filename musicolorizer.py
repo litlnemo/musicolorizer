@@ -653,11 +653,12 @@ def panel_header(state):
 
 
 def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
-    """Draw the playlist panel and control buttons over the bars. Returns {action: rect} for whatever
-    button is clickable right now: the Prev/Pause/Skip/Quit buttons and the Title button, or just the
-    "Show playlist" chip if the panel is hidden. The playlist rows are clickable too; their rects come from row_layout."""
+    """Draw the playlist panel and control buttons over the bars. Returns (buttons, rows): what's clickable right now.
+    buttons is {action: rect}: the Prev/Pause/Skip/Quit buttons and the Title button, or just the "Show playlist"
+    chip if the panel is hidden. rows is {song index: rect} for the playlist rows, the same rects they were drawn in
+    (from row_layout), or {} while the panel is hidden."""
     if not state.panel_visible:
-        return draw_chip(screen, fonts, mouse_pos)
+        return draw_chip(screen, fonts, mouse_pos), {}
 
     buttons = control_layout(screen.get_size())
     width = panel_width(screen.get_size())
@@ -684,8 +685,9 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     y += ROW_HEIGHT
 
     titles = state.titles
-    # Each row is drawn in its rect from row_layout, the same rects clicks are checked against
-    for i, row in row_layout(screen.get_size(), state).items():
+    # Each row is drawn in its rect from row_layout; the same rects are returned, so clicks land on what's drawn
+    rows = row_layout(screen.get_size(), state)
+    for i, row in rows.items():
         y = row.y
         if i == state.index:
             pygame.draw.rect(screen, (60, 60, 75), row.inflate(0, -2), border_radius=4)
@@ -706,7 +708,7 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     # The corner title's mode, on its own line at the bottom of the panel
     draw_button(screen, fonts, title_button, title_mode_label(state.title_mode), mouse_pos)
 
-    return {**buttons, CHANGE_TITLE_MODE: title_button}
+    return {**buttons, CHANGE_TITLE_MODE: title_button}, rows
 
 
 # ---------- Playback ----------
@@ -715,7 +717,8 @@ def next_action(event, buttons=None, rows=None, panel=None):
     """Decide what an event means for playback: QUIT, NEXT, PREVIOUS, PAUSE, TOGGLE_PANEL, CHANGE_TITLE_MODE, ENDED,
     (JUMP, index), or None (keep playing).
     buttons is the {action: rect} map of what's clickable (from control_layout or draw_overlay), for mouse clicks.
-    rows is the {song index: rect} map of playlist rows (from row_layout); clicking one jumps to that song.
+    rows is the {song index: rect} map of playlist rows (from draw_overlay, or row_layout before the first frame);
+    clicking one jumps to that song.
     panel is the panel's rect (from panel_rect), or None while it's hidden; the mouse wheel scrolls only over it.
     Up/Down and the wheel give (SCROLL, step)."""
     if event.type == pygame.QUIT:
@@ -1001,8 +1004,7 @@ def play_song(screen, songfile):
 
         screen.blit(bar_layer, (0, 0))
         # What's clickable depends on whether the panel is showing, so take it from what was just drawn
-        buttons = draw_overlay(screen, state, fonts, pygame.mouse.get_pos())
-        rows = row_layout(screen.get_size(), state)
+        buttons, rows = draw_overlay(screen, state, fonts, pygame.mouse.get_pos())
         panel = panel_rect(screen.get_size(), state)
         # The corner text goes on the screen (not the bar layer), on top of the bars and panel.
         # Its timer is the song's play position, so it starts over for each song and holds while paused.
