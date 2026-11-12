@@ -174,6 +174,8 @@ TOGGLE_SHUFFLE = 'toggle_shuffle'
 # Or switching the repeat mode (R): off -> all -> one -> off
 CYCLE_REPEAT = 'cycle_repeat'
 REPEAT_MODES = ('off', 'all', 'one')
+# Or showing or hiding the key help (?)
+TOGGLE_HELP = 'toggle_help'
 # Scrolling the playlist (mouse wheel over the panel, or Up/Down) only changes which songs are visible.
 # This action is the pair (SCROLL, step), step +1 for one row later or -1 for one row earlier;
 # scroll_step() reads the step back out.
@@ -444,6 +446,8 @@ class PlaybackState:
         # Repeat: 'off' (the playlist ends after the last song), 'all' (it starts over from the first song),
         # or 'one' (a song that finishes plays again)
         self.repeat = 'off'
+        # The key help panel (?), hidden until asked for
+        self.help_visible = False
         self._titles = None  # filled in the first time the panel asks for titles
 
     def start(self, index):
@@ -486,6 +490,11 @@ class PlaybackState:
         """Turn shuffle on if it's off, or off if it's on. Returns True if now shuffling."""
         self.shuffle = not self.shuffle
         return self.shuffle
+
+    def toggle_help(self):
+        """Show the key help if it's hidden, or hide it if it's showing. Returns True if now showing."""
+        self.help_visible = not self.help_visible
+        return self.help_visible
 
     def next_repeat(self):
         """Switch to the next repeat mode, off -> all -> one -> off. Returns the new mode."""
@@ -642,6 +651,49 @@ def panel_rect(screen_size, state):
     return pygame.Rect(PANEL_MARGIN, PANEL_MARGIN, panel_width(screen_size), bottom - PANEL_MARGIN)
 
 
+# The key help panel (?): one line per key, in this order. Keep it in step with next_action and the README.
+HELP_LINES = (
+    "H — Hide / show the playlist panel",
+    "T — Corner-title mode (always / fade / cycle)",
+    "P — Pause / resume",
+    "N or Right arrow — Skip to the next song",
+    "Left arrow — Previous song (or restart it)",
+    "Up / Down — Scroll the playlist",
+    "Mouse wheel over the panel — Scroll the playlist",
+    "+ / - — Volume up / down",
+    "S — Shuffle on / off",
+    "R — Repeat (off / all / one)",
+    "Q — Quit",
+    "Click a song in the playlist — Jump to it",
+    "? — Show / hide this help",
+)
+HELP_ROW_HEIGHT = 22
+
+
+def help_layout(screen_size, state):
+    """Where the key help panel goes: in the top-left corner, under the playlist panel when it's showing,
+    or under the "Show playlist" chip when the panel is hidden. It's only text, so nothing in it is clickable."""
+    above = panel_rect(screen_size, state) or chip_layout(screen_size)
+    width = panel_width(screen_size)  # the same width as the playlist panel above it
+    height = len(HELP_LINES) * HELP_ROW_HEIGHT + 2 * PANEL_PADDING
+    return pygame.Rect(PANEL_MARGIN, above.bottom + PANEL_MARGIN, width, height)
+
+
+def draw_help(screen, state, fonts):
+    """Draw the key help panel over the bars while it's showing: translucent like the playlist panel, one line per key."""
+    if not state.help_visible:
+        return
+    area = help_layout(screen.get_size(), state)
+    panel = pygame.Surface(area.size, pygame.SRCALPHA)
+    panel.fill((0, 0, 0, 170))
+    screen.blit(panel, area.topleft)
+    x = area.x + PANEL_PADDING
+    y = area.y + PANEL_PADDING - (ROW_HEIGHT - HELP_ROW_HEIGHT) // 2
+    for line in HELP_LINES:
+        draw_text(screen, fonts, "header", line, (220, 220, 220), x, y, area.width - 2 * PANEL_PADDING)
+        y += HELP_ROW_HEIGHT
+
+
 CHIP_LABEL = "Show playlist (H)"
 CHIP_WIDTH = 170
 
@@ -780,7 +832,7 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
 
 def next_action(event, buttons=None, rows=None, panel=None):
     """Decide what an event means for playback: QUIT, NEXT, PREVIOUS, PAUSE, TOGGLE_PANEL, CHANGE_TITLE_MODE,
-    VOLUME_UP, VOLUME_DOWN, TOGGLE_SHUFFLE, CYCLE_REPEAT, ENDED, (JUMP, index), or None (keep playing).
+    VOLUME_UP, VOLUME_DOWN, TOGGLE_SHUFFLE, CYCLE_REPEAT, TOGGLE_HELP, ENDED, (JUMP, index), or None (keep playing).
     buttons is the {action: rect} map of what's clickable (from control_layout or draw_overlay), for mouse clicks.
     rows is the {song index: rect} map of playlist rows (from draw_overlay, or row_layout before the first frame);
     clicking one jumps to that song.
@@ -813,6 +865,9 @@ def next_action(event, buttons=None, rows=None, panel=None):
             return TOGGLE_SHUFFLE
         if event.key == pygame.K_r:
             return CYCLE_REPEAT
+        # ? is shift-/ on most keyboards, so it's read from the typed character
+        if getattr(event, "unicode", "") == "?":
+            return TOGGLE_HELP
         # Up and Down scroll the playlist (Left and Right stay Previous and Next)
         if event.key == pygame.K_UP:
             return (SCROLL, -1)
@@ -1122,6 +1177,8 @@ def play_song(screen, songfile):
                 state.toggle_shuffle()  # the song keeps playing; run_playlist picks what comes after it
             elif action == CYCLE_REPEAT:
                 state.next_repeat()  # the song keeps playing; run_playlist uses the mode when it ends
+            elif action == TOGGLE_HELP:
+                state.toggle_help()  # like hiding the panel, the song keeps playing
             elif action:
                 if action == PREVIOUS:
                     # Read the position before stopping (it holds still while paused)
@@ -1141,6 +1198,7 @@ def play_song(screen, songfile):
         screen.blit(bar_layer, (0, 0))
         # What's clickable depends on whether the panel is showing, so take it from what was just drawn
         buttons, rows = draw_overlay(screen, state, fonts, pygame.mouse.get_pos())
+        draw_help(screen, state, fonts)  # text only: clicks still go to the buttons and rows
         panel = panel_rect(screen.get_size(), state)
         # The corner text goes on the screen (not the bar layer), on top of the bars and panel.
         # Its timer is the song's play position, so it starts over for each song and holds while paused.
