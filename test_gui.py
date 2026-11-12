@@ -464,7 +464,9 @@ def test_draw_overlay_visible_unchanged(offscreen, monkeypatch):
     assert clickable == {**control_layout(offscreen.get_size()),
                          musicolorizer.CHANGE_TITLE_MODE: musicolorizer.title_mode_layout(offscreen.get_size(), state)}
     assert rows == row_layout(offscreen.get_size(), state)
-    assert drawn == ["Prev (<)", "Pause (P)", "Skip (>)", "Quit (Q)", "Playlist: 1 of 2", "1. One", "2. Two", "Title: cycle (T)"]
+    # (and the status line under the Title button, added for issue #39)
+    assert drawn == ["Prev (<)", "Pause (P)", "Skip (>)", "Quit (Q)", "Playlist: 1 of 2", "1. One", "2. Two", "Title: cycle (T)",
+                     "Vol: 100%"]
 
 
 def test_chip_is_hit_testable(offscreen):
@@ -850,7 +852,8 @@ def test_title_button_label_matches_mode(offscreen, monkeypatch, mode):
     state.title_mode = mode
     drawn = record_text(monkeypatch)
     draw_overlay(offscreen, state, musicolorizer.load_fonts())
-    assert drawn[-1] == title_mode_label(mode) == f"Title: {mode} (T)"
+    # The Title button is the last thing drawn before the status line (issue #39)
+    assert drawn[-2] == title_mode_label(mode) == f"Title: {mode} (T)"
 
 
 def test_title_button_is_clickable_and_inside_the_panel(offscreen):

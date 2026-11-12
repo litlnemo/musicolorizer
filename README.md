@@ -48,6 +48,7 @@ While music plays, a panel in the top-left corner shows the playlist with the cu
 | Hide / show the playlist panel | Show playlist (H), while hidden | H |
 | Change how the song name in the corner shows | Title: … (T), at the bottom of the panel | T |
 | Scroll the playlist | Mouse wheel over the panel | Up / Down Arrow |
+| Volume up / down | None (the level shows under the Title button, as "Vol: 80%") | + (or =) / - |
 | Quit | Quit (Q) | Q, Esc, or close the window |
 
 **Previous** works like most music players: in the first 3 seconds of a song it goes back to the song before (skipping any that couldn't play), and after that it starts the current song over. On the first song it always starts over. The 3 seconds is set by `PREVIOUS_RESTART_SECONDS` in `musicolorizer.py`.
@@ -240,7 +241,7 @@ The `main` function controls the overall operation of the program. It gets the s
 While paused, the bars hold still and the music position stops too, so everything picks up in sync on resume.
 
 ### The playlist panel
-`draw_overlay` draws the panel: the header line (`panel_header`), the four buttons (laid out by `control_layout`), the playlist rows, and the Title button at the bottom (`title_mode_layout`). A long playlist shows 8 rows at a time (`panel_window`): it follows the current song until you scroll, and goes back to following it when the playing song moves out of view. When the panel is hidden it draws only the small "Show playlist (H)" button instead (`draw_chip`). Either way it returns what can be clicked right now: the buttons, and the playlist rows it just drew (none while the panel is hidden).
+`draw_overlay` draws the panel: the header line (`panel_header`), the four buttons (laid out by `control_layout`), the playlist rows, the Title button (`title_mode_layout`), and a status line under it with the volume (`status_text`, `status_layout`). A long playlist shows 8 rows at a time (`panel_window`): it follows the current song until you scroll, and goes back to following it when the playing song moves out of view. When the panel is hidden it draws only the small "Show playlist (H)" button instead (`draw_chip`). Either way it returns what can be clicked right now: the buttons, and the playlist rows it just drew (none while the panel is hidden).
 
 Drawing and clicking share the same layout functions, so a click always lands on what's drawn: `play_song` gives `next_action` the song rows that `draw_overlay` just drew, to tell which song was clicked, and the panel area from `panel_rect`, to tell whether the mouse wheel is over the panel.
 

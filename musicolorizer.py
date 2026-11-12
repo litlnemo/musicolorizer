@@ -166,6 +166,9 @@ PAUSE = 'pause'
 TOGGLE_PANEL = 'toggle_panel'
 # Or switching how the corner title shows (always -> fade -> cycle -> always)
 CHANGE_TITLE_MODE = 'change_title_mode'
+# Or turning the volume up (+) or down (-)
+VOLUME_UP, VOLUME_DOWN = 'volume_up', 'volume_down'
+VOLUME_STEP = 0.05  # how much one press of + or - changes the volume (0.0 silent to 1.0 full)
 # Scrolling the playlist (mouse wheel over the panel, or Up/Down) only changes which songs are visible.
 # This action is the pair (SCROLL, step), step +1 for one row later or -1 for one row earlier;
 # scroll_step() reads the step back out.
@@ -427,6 +430,8 @@ class PlaybackState:
         # The first song row the panel shows once the user has scrolled, or None while the panel
         # follows the current song (the window visible_range gives). See panel_window().
         self.scroll_start = None
+        # The music volume, 0.0 (silent) to 1.0 (full). start() leaves it alone, so it carries on to the next song.
+        self.volume = 1.0
         self._titles = None  # filled in the first time the panel asks for titles
 
     def start(self, index):
@@ -460,6 +465,12 @@ class PlaybackState:
         """Hide the playlist panel if it's showing, or show it if it's hidden. Returns True if now showing."""
         self.panel_visible = not self.panel_visible
         return self.panel_visible
+
+    def change_volume(self, step):
+        """Turn the volume up (step > 0) or down (step < 0), never below 0.0 or above 1.0. Returns the new volume."""
+        # Rounded so twenty presses of - land exactly on 0.0, not on a tiny leftover fraction
+        self.volume = round(max(0.0, min(1.0, self.volume + step)), 2)
+        return self.volume
 
     def next_title_mode(self):
         """Switch the corner title to the next mode, always -> fade -> cycle -> always. Returns the new mode."""
@@ -571,11 +582,23 @@ def title_mode_label(mode):
     return f"Title: {mode} (T)"
 
 
+def status_text(state):
+    """The status line under the Title button: the volume as a percent, e.g. "Vol: 80%"."""
+    return f"Vol: {int(round(state.volume * 100))}%"
+
+
+def status_layout(screen_size, state):
+    """Where the status line goes: its own line under the Title button, at the bottom of the panel."""
+    title_button = title_mode_layout(screen_size, state)
+    width = panel_width(screen_size) - 2 * PANEL_PADDING
+    return pygame.Rect(title_button.x, title_button.bottom + 4, max(1, width), ROW_HEIGHT)
+
+
 def panel_rect(screen_size, state):
     """The whole playlist panel's area, or None while it's hidden. The mouse wheel scrolls the playlist only over it."""
     if not state.panel_visible:
         return None
-    bottom = title_mode_layout(screen_size, state).bottom + PANEL_PADDING
+    bottom = status_layout(screen_size, state).bottom + PANEL_PADDING
     return pygame.Rect(PANEL_MARGIN, PANEL_MARGIN, panel_width(screen_size), bottom - PANEL_MARGIN)
 
 
@@ -705,8 +728,10 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
     if more:
         draw_text(screen, fonts, "row", f"... {more} more", (130, 130, 130), x + 18, y, text_width)
 
-    # The corner title's mode, on its own line at the bottom of the panel
+    # The corner title's mode, on its own line at the bottom of the panel, with the status line (volume) under it
     draw_button(screen, fonts, title_button, title_mode_label(state.title_mode), mouse_pos)
+    status = status_layout(screen.get_size(), state)
+    draw_text(screen, fonts, "header", status_text(state), (160, 160, 160), status.x, status.y, status.width)
 
     return {**buttons, CHANGE_TITLE_MODE: title_button}, rows
 
@@ -714,8 +739,8 @@ def draw_overlay(screen, state, fonts, mouse_pos=(-1, -1)):
 # ---------- Playback ----------
 
 def next_action(event, buttons=None, rows=None, panel=None):
-    """Decide what an event means for playback: QUIT, NEXT, PREVIOUS, PAUSE, TOGGLE_PANEL, CHANGE_TITLE_MODE, ENDED,
-    (JUMP, index), or None (keep playing).
+    """Decide what an event means for playback: QUIT, NEXT, PREVIOUS, PAUSE, TOGGLE_PANEL, CHANGE_TITLE_MODE,
+    VOLUME_UP, VOLUME_DOWN, ENDED, (JUMP, index), or None (keep playing).
     buttons is the {action: rect} map of what's clickable (from control_layout or draw_overlay), for mouse clicks.
     rows is the {song index: rect} map of playlist rows (from draw_overlay, or row_layout before the first frame);
     clicking one jumps to that song.
@@ -739,6 +764,11 @@ def next_action(event, buttons=None, rows=None, panel=None):
             return TOGGLE_PANEL
         if event.key == pygame.K_t:
             return CHANGE_TITLE_MODE
+        # + is shift-= on most keyboards, so = works too (and the keypad's + and -)
+        if event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS) or getattr(event, "unicode", "") == "+":
+            return VOLUME_UP
+        if event.key in (pygame.K_MINUS, pygame.K_KP_MINUS) or getattr(event, "unicode", "") == "-":
+            return VOLUME_DOWN
         # Up and Down scroll the playlist (Left and Right stay Previous and Next)
         if event.key == pygame.K_UP:
             return (SCROLL, -1)
@@ -1003,6 +1033,7 @@ def play_song(screen, songfile):
         return UNPLAYABLE
     pygame.event.clear(SONG_END)  # drop any end event left over from the previous song
     pygame.mixer.music.play(0)
+    pygame.mixer.music.set_volume(state.volume)  # every song plays at the level picked with + and -
     pygame.display.set_caption(f"Musicolorizer — {display}")
     fonts = load_fonts()
     # The corner title stops short of the time in the bottom-right corner
@@ -1039,6 +1070,10 @@ def play_song(screen, songfile):
                 state.toggle_panel()
             elif action == CHANGE_TITLE_MODE:
                 state.next_title_mode()  # the corner title follows it from the next frame on
+            elif action in (VOLUME_UP, VOLUME_DOWN):
+                # Like Pause, the song keeps playing
+                state.change_volume(VOLUME_STEP if action == VOLUME_UP else -VOLUME_STEP)
+                pygame.mixer.music.set_volume(state.volume)
             elif action:
                 if action == PREVIOUS:
                     # Read the position before stopping (it holds still while paused)
