@@ -49,6 +49,7 @@ While music plays, a panel in the top-left corner shows the playlist with the cu
 | Change how the song name in the corner shows | Title: … (T), at the bottom of the panel | T |
 | Scroll the playlist | Mouse wheel over the panel | Up / Down Arrow |
 | Volume up / down | None (the level shows under the Title button, as "Vol: 80%") | + (or =) / - |
+| Shuffle on / off | None ("Shuffle" shows in the status line while it's on) | S |
 | Quit | Quit (Q) | Q, Esc, or close the window |
 
 **Previous** works like most music players: in the first 3 seconds of a song it goes back to the song before (skipping any that couldn't play), and after that it starts the current song over. On the first song it always starts over. The 3 seconds is set by `PREVIOUS_RESTART_SECONDS` in `musicolorizer.py`.
@@ -58,6 +59,8 @@ Pressing **Previous** or **Skip** while paused starts that song playing.
 **Clicking a song** in the playlist jumps to it, and the playlist carries on from there. Clicking the song that's playing starts it over, and clicking one marked "can't play" does nothing.
 
 **Scrolling** shows songs further down a long playlist (the panel shows 8 at a time) without changing what's playing, so you can click any song. If the playing song moves out of view, the panel follows it again.
+
+**Shuffle** plays the songs in a random order, never the same song twice in a row, and keeps going until you quit or turn it off. The playlist still lists the songs in order. Previous goes back through the songs that played, and turning shuffle off carries on in playlist order from the song that's playing.
 
 **Hiding the panel** gives the visualizer the whole window. While it's hidden, a small "Show playlist (H)" button sits in the top-left corner; click it or press H to bring the panel back. All the keys keep working while the panel is hidden, and a hidden panel stays hidden from song to song. Each new playlist starts with the panel showing.
 
@@ -226,7 +229,7 @@ The `main` function controls the overall operation of the program. It gets the s
 ### `run_playlist` and `PlaybackState`
 `run_playlist` steps through the playlist by index, so it can go back as well as forward. After each song it moves on to the next one, goes back one (Previous), plays the same song again (Previous after the first 3 seconds), or stops (Quit). Songs that couldn't be read are skipped, and aren't tried again.
 
-`PlaybackState` keeps track of what the playlist panel needs: the songs, which one is current, which couldn't play, whether the music is paused, whether the panel is showing, the corner-title mode, and where the playlist is scrolled to.
+`PlaybackState` keeps track of what the playlist panel needs: the songs, which one is current, which couldn't play, whether the music is paused, whether the panel is showing, the corner-title mode, where the playlist is scrolled to, the volume, and whether it's shuffling (with the songs played so far, for Previous).
 
 `run_playlist` also handles a click on a song in the panel: it jumps straight to that song and carries on from there.
 
