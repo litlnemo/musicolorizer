@@ -70,8 +70,10 @@ Pressing **Previous** or **Skip** while paused starts that song playing.
 
 **Hiding the panel** gives the visualizer the whole window. While it's hidden, a small "Show playlist (H)" button sits in the top-left corner; click it or press H to bring the panel back. All the keys keep working while the panel is hidden, and a hidden panel stays hidden from song to song. Each new playlist starts with the panel showing.
 
-### Song name in the corner
-While a song plays, its name shows in the bottom-left corner, along with the artist when the file has an artist tag. Songs without tags show the title from the filename. The window title shows the same text.
+### Song name and time in the corners
+While a song plays, its name shows in the bottom-left corner, along with the artist when the file has an artist tag. Songs without tags show the title from the filename. The window title and the loading screen show the same text.
+
+The bottom-right corner shows how far into the song you are and how long it is, as "1:23 / 3:45" (or "1:02:05 / 1:10:00" for songs an hour or longer). If the song's length can't be read, it shows just the time so far. The time holds still while the music is paused, and it stays on screen whether the panel is showing or hidden and in every title mode. A long song name stops short of it rather than running into it.
 
 How long the name stays on screen depends on the title mode. Press **T**, or click the **Title** button at the bottom of the playlist panel, to switch modes while a song plays: always, then fade, then cycle, then back to always. The button shows the current mode, and the new mode takes effect right away on the song that's playing and carries on to the next songs. T works while the panel is hidden, too.
 
@@ -103,7 +105,7 @@ The libraries used in this project include:
 - librosa (music analysis)
 - pygame (playing the music and drawing everything in the window: the bars, the playlist panel and controls, and the song name)
 - numpy (mathy array stuff used to work with the spectrogram, short-time Fourier analysis, etc.)
-- mutagen (reading artist and title tags from the audio files)
+- mutagen (reading artist and title tags and the song's length from the audio files)
 - tkinter (the song chooser window and file dialogs; it comes with most Python installs)
 - random (generating random colorways, and random shapes for titles with no shape keyword)
 - os and sys (file paths, folders, and songs given on the command line)
@@ -233,7 +235,9 @@ This function gets the spectrogram information for a specific location in the tr
 The `main` function controls the overall operation of the program. It gets the songs from the command line, or from the song chooser if none were given (`ask_for_songs`). Then it turns them into a playlist (`playlist_from_paths`, which reads a folder's songs in alphabetical order) and reports any files it can't find (`existing_songs`). Display settings such as `pygame.display.Info()`[^6] and `pygame.display.set_mode()`[^7] are used to define and initialize the visualizer screen. Then `run_playlist` plays the songs.
 
 ### `run_playlist` and `PlaybackState`
-`run_playlist` steps through the playlist by index, so it can go back as well as forward. After each song it moves on to the next one, goes back one (Previous), plays the same song again (Previous after the first 3 seconds), or stops (Quit). Songs that couldn't be read are skipped, and aren't tried again.
+`run_playlist` steps through the playlist by index, so it can go back as well as forward. After each song it moves on to the next one, goes back one (Previous), plays the same song again (Previous after the first 3 seconds), or stops (Quit). Songs that couldn't be read are skipped, and aren't tried again, and the playlist stops if none of its songs can play.
+
+Which song comes next is worked out by `after_song` and `next_index`. In repeat one, a song that finishes plays again. Otherwise the next song is the one after it, wrapping round to the first in repeat all, or a random one while shuffling (`random_next`, which never picks the song that's playing and skips songs that can't play). While shuffling, Previous goes back through the songs that played (`shuffle_back`).
 
 `PlaybackState` keeps track of what the playlist panel needs: the songs, which one is current, which couldn't play, whether the music is paused, whether the panel is showing, the corner-title mode, where the playlist is scrolled to, the volume, whether it's shuffling (with the songs played so far, for Previous), and the repeat mode.
 
@@ -242,15 +246,19 @@ The `main` function controls the overall operation of the program. It gets the s
 ### `play_song`
 `play_song` handles one song from start to finish:
 
-1. It picks the colorway (`get_colorway`) and shape (`get_shape`) from the song's title (see "Which title is matched" above). It also reads the artist and title tags for the song name shown in the corner (`get_display_info`).
-2. While a loading screen shows, `analyze_song` loads the song with librosa. It uses `librosa.amplitude_to_db()` and `librosa.mel_frequencies()` to convert the spectrogram into a dB-scaled spectrogram[^2] and compute acoustic frequencies.[^3] `librosa.frames_to_time()` then converts frame counts into seconds.[^4]
-3. Color bars are generated (`build_bars`), then `pygame.mixer.music.load()`[^8] and `pygame.mixer.music.play()`[^9] load and play the music.
-4. Each frame, it handles the controls (`next_action` turns key presses and clicks into actions), updates and draws the bars, then draws the playlist panel (`draw_overlay`) and the song name (`draw_title`) on top. `pygame.display.flip()`[^10] is used to update the screen.
+1. It picks the colorway (`get_colorway`) and shape (`get_shape`) from the song's title (see "Which title is matched" above). It also reads the artist and title tags for the song name shown in the corner (`get_display_info`), and the song's length (`song_length`).
+2. While a loading screen shows the song name (`show_loading`), `analyze_song` loads the song with librosa. It uses `librosa.amplitude_to_db()` and `librosa.mel_frequencies()` to convert the spectrogram into a dB-scaled spectrogram[^2] and compute acoustic frequencies.[^3] `librosa.frames_to_time()` then converts frame counts into seconds.[^4]
+3. Color bars are generated (`build_bars`), then `pygame.mixer.music.load()`[^8] and `pygame.mixer.music.play()`[^9] load and play the music at the current volume.
+4. Each frame, it handles the controls (`next_action` turns key presses and clicks into actions), updates and draws the bars, then draws the playlist panel (`draw_overlay`), the key help when it's showing (`draw_help`), the song name (`draw_title`) and the time (`draw_time`, with the text from `time_text`) on top. `pygame.display.flip()`[^10] is used to update the screen.
+
+Volume, shuffle, repeat, pause, the title mode, the panel and the key help are all handled right there, so the song keeps playing when you use them.
 
 While paused, the bars hold still and the music position stops too, so everything picks up in sync on resume.
 
 ### The playlist panel
-`draw_overlay` draws the panel: the header line (`panel_header`), the four buttons (laid out by `control_layout`), the playlist rows, the Title button (`title_mode_layout`), and a status line under it with the volume (`status_text`, `status_layout`). A long playlist shows 8 rows at a time (`panel_window`): it follows the current song until you scroll, and goes back to following it when the playing song moves out of view. When the panel is hidden it draws only the small "Show playlist (H)" button instead (`draw_chip`). Either way it returns what can be clicked right now: the buttons, and the playlist rows it just drew (none while the panel is hidden).
+`draw_overlay` draws the panel: the header line (`panel_header`), the four buttons (laid out by `control_layout`), the playlist rows, the Title button (`title_mode_layout`), and a status line under it with the volume, plus "Shuffle" and the repeat mode while they're on (`status_text`, `status_layout`). A long playlist shows 8 rows at a time (`panel_window`): it follows the current song until you scroll, and goes back to following it when the playing song moves out of view. When the panel is hidden it draws only the small "Show playlist (H)" button instead (`draw_chip`). Either way it returns what can be clicked right now: the buttons, and the playlist rows it just drew (none while the panel is hidden).
+
+The key help is a separate panel (`draw_help`, placed by `help_layout`) under the playlist panel, or under the "Show playlist" button while the panel is hidden. Its lines are `HELP_LINES` in `musicolorizer.py`, so a new key needs a line there as well as a row in the Controls table above.
 
 Drawing and clicking share the same layout functions, so a click always lands on what's drawn: `play_song` gives `next_action` the song rows that `draw_overlay` just drew, to tell which song was clicked, and the panel area from `panel_rect`, to tell whether the mouse wheel is over the panel.
 
@@ -284,6 +292,11 @@ Some choices were made out of frustration, some because I am still new to this a
 - Scrolling a long playlist with the mouse wheel or the arrow keys
 - Choosing the corner-title display mode from the window (the T key or the Title button)
 - Thirty more colorways and more shape keywords
+- Volume control (+ and -)
+- Shuffle and repeat
+- How far into the song you are, and how long it is, in the corner
+- In-app help for the keys (?)
+- The artist and song name on the loading screen
 
 Still to do (see the [open issues](https://github.com/litlnemo/musicolorizer/issues)):
 
