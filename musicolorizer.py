@@ -891,14 +891,8 @@ TITLE_MARGIN = 16
 TITLE_OUTLINE = 2
 
 
-def make_title_image(text, max_width):
-    """Render the corner text once per song: light text with a dark outline so it reads over any bars.
-    Returns None if pygame can't draw text."""
-    try:
-        font = pygame.font.Font(None, 36)
-    except pygame.error:
-        return None
-    text = shorten_to_width(font, text, max(1, max_width - 2 * TITLE_OUTLINE))
+def outlined_text(font, text):
+    """Light text with a dark outline, so it reads over any bars. Used by the corner title and the time."""
     light = font.render(text, True, (235, 235, 235))
     dark = font.render(text, True, (0, 0, 0))
     o = TITLE_OUTLINE
@@ -911,12 +905,69 @@ def make_title_image(text, max_width):
     return image
 
 
+def make_title_image(text, max_width):
+    """Render the corner text once per song: light text with a dark outline so it reads over any bars.
+    Returns None if pygame can't draw text."""
+    try:
+        font = pygame.font.Font(None, 36)
+    except pygame.error:
+        return None
+    return outlined_text(font, shorten_to_width(font, text, max(1, max_width - 2 * TITLE_OUTLINE)))
+
+
 def draw_title(screen, image, alpha):
     """Draw the corner text in the bottom-left corner at the given strength (0.0-1.0)."""
     if image is None or alpha <= 0:
         return
     image.set_alpha(int(round(255 * min(1.0, alpha))))
     screen.blit(image, (TITLE_MARGIN, screen.get_height() - image.get_height() - TITLE_MARGIN))
+
+
+# ---------- Elapsed / total time in the bottom-right corner ----------
+
+def song_length(songfile):
+    """The song's length in seconds, read from the file's info by mutagen (not the audio itself), or None if it can't be read."""
+    try:
+        audio = mutagen.File(songfile)
+        length = audio.info.length if audio is not None else None
+    except Exception:
+        return None
+    return float(length) if length and length > 0 else None
+
+
+def format_time(seconds):
+    """Seconds as "m:ss" (83 -> "1:23"), or "h:mm:ss" from an hour on (3725 -> "1:02:05")."""
+    total = max(0, int(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def time_text(elapsed, length):
+    """The corner time: "elapsed / total" ("1:23 / 3:45"), or just the elapsed time if the length is unknown."""
+    if length is None:
+        return format_time(elapsed)
+    return f"{format_time(min(elapsed, length))} / {format_time(length)}"
+
+
+def draw_time(screen, fonts, text):
+    """Draw the time in the bottom-right corner, outlined like the corner title, TITLE_MARGIN in from the edges.
+    It's drawn whether the panel is showing or hidden, and in every title mode."""
+    if not fonts:
+        return
+    image = outlined_text(fonts["row"], text)
+    screen.blit(image, (screen.get_width() - image.get_width() - TITLE_MARGIN,
+                        screen.get_height() - image.get_height() - TITLE_MARGIN))
+
+
+def time_width(fonts, length):
+    """How much room the corner time can take this song (its widest text), so the corner title can leave it clear."""
+    if not fonts:
+        return 0
+    widest = time_text(length if length is not None else 0, length).replace("0", "8").replace("1", "8")
+    return fonts["row"].size(widest)[0] + 2 * TITLE_OUTLINE
 
 
 def play_song(screen, songfile):
@@ -934,6 +985,7 @@ def play_song(screen, songfile):
     match_title = get_match_title(songfile)
     colorway = get_colorway(match_title, colormap)
     shape = get_shape(match_title)
+    length = song_length(songfile)  # for the time in the bottom-right corner; None if it can't be read
     # What's shown on the loading screen, in the corner and in the caption (artist/title tags if the file has them)
     display = get_display_info(songfile)
 
@@ -952,9 +1004,10 @@ def play_song(screen, songfile):
     pygame.event.clear(SONG_END)  # drop any end event left over from the previous song
     pygame.mixer.music.play(0)
     pygame.display.set_caption(f"Musicolorizer — {display}")
-    title_image = make_title_image(display, screen.get_width() - 2 * TITLE_MARGIN)
-
     fonts = load_fonts()
+    # The corner title stops short of the time in the bottom-right corner
+    title_image = make_title_image(display, screen.get_width() - 3 * TITLE_MARGIN - time_width(fonts, length))
+
     buttons = control_layout(screen.get_size())
     rows = row_layout(screen.get_size(), state)
     panel = panel_rect(screen.get_size(), state)
@@ -1009,7 +1062,9 @@ def play_song(screen, songfile):
         # The corner text goes on the screen (not the bar layer), on top of the bars and panel.
         # Its timer is the song's play position, so it starts over for each song and holds while paused.
         # The mode is read every frame, so changing it with T takes effect right away.
-        draw_title(screen, title_image, title_alpha(max(0, pygame.mixer.music.get_pos()) / 1000.0, state.title_mode))
+        seconds_in = max(0, pygame.mixer.music.get_pos()) / 1000.0  # holds still while paused
+        draw_title(screen, title_image, title_alpha(seconds_in, state.title_mode))
+        draw_time(screen, fonts, time_text(seconds_in, length))
 
         pygame.display.flip()
         clock.tick(60)
