@@ -931,12 +931,10 @@ def play_song(screen, songfile):
     match_title = get_match_title(songfile)
     colorway = get_colorway(match_title, colormap)
     shape = get_shape(match_title)
-    # The loading screen still shows the filename title
-    title = get_title_from_path(songfile)
-    # What's shown in the corner and the caption (artist/title tags if the file has them)
+    # What's shown on the loading screen, in the corner and in the caption (artist/title tags if the file has them)
     display = get_display_info(songfile)
 
-    show_loading(screen, title)
+    show_loading(screen, display)
     if not analyze_song(songfile):
         return UNPLAYABLE
 

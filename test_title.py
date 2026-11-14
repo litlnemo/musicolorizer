@@ -134,7 +134,8 @@ def test_matching_uses_tag_title(tmp_path, monkeypatch):
     song = tagged_wav(tmp_path / "Almost Blue.wav", artist="Someone", title="Red Sharp Rain")
     seen = watch_matching(monkeypatch)
     assert musicolorizer.play_song(None, song) == musicolorizer.UNPLAYABLE
-    assert seen == {"colors": "Red Sharp Rain", "shape": "Red Sharp Rain", "loading": "Almost Blue"}
+    # The loading screen shows the same "Artist — Title" as the corner title (issue #47)
+    assert seen == {"colors": "Red Sharp Rain", "shape": "Red Sharp Rain", "loading": "Someone — Red Sharp Rain"}
 
 
 def test_matching_untagged_uses_filename_title(tmp_path, monkeypatch):
@@ -142,6 +143,23 @@ def test_matching_untagged_uses_filename_title(tmp_path, monkeypatch):
     seen = watch_matching(monkeypatch)
     assert musicolorizer.play_song(None, song) == musicolorizer.UNPLAYABLE
     assert seen == {"colors": "Almost Blue", "shape": "Almost Blue", "loading": "Almost Blue"}
+
+
+def test_loading_screen_shows_the_tag_title(tmp_path, monkeypatch):
+    # Issue #47: the loading screen used to show the filename title ("track01") while everything else showed the tags
+    song = tagged_mp3(tmp_path / "track01.mp3", artist="Elvis Costello", title="Almost Blue")
+    seen = watch_matching(monkeypatch)
+    assert musicolorizer.play_song(None, song) == musicolorizer.UNPLAYABLE
+    assert seen["loading"] == "Elvis Costello — Almost Blue"
+    assert seen["loading"] == get_display_info(song)
+
+
+def test_loading_screen_title_only_tag(tmp_path, monkeypatch):
+    # A title tag but no artist: just the tag title, still not the filename
+    song = tagged_flac(tmp_path / "track02.flac", title="Big Yellow Taxi")
+    seen = watch_matching(monkeypatch)
+    musicolorizer.play_song(None, song)
+    assert seen["loading"] == "Big Yellow Taxi"
 
 
 def test_match_title_from_tags(tmp_path):
