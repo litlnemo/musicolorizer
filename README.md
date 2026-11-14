@@ -51,6 +51,7 @@ While music plays, a panel in the top-left corner shows the playlist with the cu
 | Volume up / down | None (the level shows under the Title button, as "Vol: 80%") | + (or =) / - |
 | Shuffle on / off | None ("Shuffle" shows in the status line while it's on) | S |
 | Repeat: off, all, one | None ("Repeat: all" or "Repeat: one" shows in the status line) | R |
+| Show / hide the key help | None | ? |
 | Quit | Quit (Q) | Q, Esc, or close the window |
 
 **Previous** works like most music players: in the first 3 seconds of a song it goes back to the song before (skipping any that couldn't play), and after that it starts the current song over. On the first song it always starts over. The 3 seconds is set by `PREVIOUS_RESTART_SECONDS` in `musicolorizer.py`.
@@ -64,6 +65,8 @@ Pressing **Previous** or **Skip** while paused starts that song playing.
 **Shuffle** plays the songs in a random order, never the same song twice in a row, and keeps going until you quit or turn it off. The playlist still lists the songs in order. Previous goes back through the songs that played, and turning shuffle off carries on in playlist order from the song that's playing.
 
 **Repeat** has three modes. Off, the playlist ends after the last song. All, it starts over from the first song. One, a song that finishes plays again. Skip always moves on to the next song, even in repeat one, and in repeat all Skip on the last song goes back to the first. Repeat one wins over shuffle; with repeat all, shuffle just keeps shuffling.
+
+**The key help** (press ?) lists every key in a panel under the playlist, or under the "Show playlist" button while the playlist is hidden. It's only text, so clicks still reach the buttons and songs, and the music keeps playing.
 
 **Hiding the panel** gives the visualizer the whole window. While it's hidden, a small "Show playlist (H)" button sits in the top-left corner; click it or press H to bring the panel back. All the keys keep working while the panel is hidden, and a hidden panel stays hidden from song to song. Each new playlist starts with the panel showing.
 
