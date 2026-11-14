@@ -443,10 +443,11 @@ def test_draw_overlay_hidden_draws_only_the_chip(offscreen, monkeypatch):
     background = (12, 34, 56)
     offscreen.fill(background)
 
-    clickable = draw_overlay(offscreen, state, musicolorizer.load_fonts())
+    clickable, rows = draw_overlay(offscreen, state, musicolorizer.load_fonts())
 
     assert drawn == [CHIP_LABEL]  # no buttons, no header, no playlist rows
     assert clickable == {TOGGLE_PANEL: chip_layout(offscreen.get_size())}
+    assert rows == {}
     # Where the playlist rows would be (below the chip) is left untouched
     chip = clickable[TOGGLE_PANEL]
     for y in range(chip.bottom + 4, chip.bottom + 120, 10):
@@ -456,18 +457,20 @@ def test_draw_overlay_hidden_draws_only_the_chip(offscreen, monkeypatch):
 def test_draw_overlay_visible_unchanged(offscreen, monkeypatch):
     state = PlaybackState(["One.mp3", "Two.mp3"])
     drawn = record_text(monkeypatch)
-    clickable = draw_overlay(offscreen, state, musicolorizer.load_fonts())
+    clickable, rows = draw_overlay(offscreen, state, musicolorizer.load_fonts())
     # Same buttons and rows as before the toggle existed, and no chip
-    # (plus the Title mode button at the bottom of the panel, added for issue #21)
+    # (plus the Title mode button at the bottom of the panel, added for issue #21).
+    # Since issue #49 draw_overlay returns (buttons, rows), with the rows it drew.
     assert clickable == {**control_layout(offscreen.get_size()),
                          musicolorizer.CHANGE_TITLE_MODE: musicolorizer.title_mode_layout(offscreen.get_size(), state)}
+    assert rows == row_layout(offscreen.get_size(), state)
     assert drawn == ["Prev (<)", "Pause (P)", "Skip (>)", "Quit (Q)", "Playlist: 1 of 2", "1. One", "2. Two", "Title: cycle (T)"]
 
 
 def test_chip_is_hit_testable(offscreen):
     state = PlaybackState(["a.mp3"])
     state.panel_visible = False
-    clickable = draw_overlay(offscreen, state, None)  # works without fonts too
+    clickable, _ = draw_overlay(offscreen, state, None)  # works without fonts too
     chip = clickable[TOGGLE_PANEL]
     assert next_action(click(chip.center), clickable) == TOGGLE_PANEL
     assert next_action(click((390, 290)), clickable) is None
@@ -853,7 +856,7 @@ def test_title_button_label_matches_mode(offscreen, monkeypatch, mode):
 def test_title_button_is_clickable_and_inside_the_panel(offscreen):
     for count in (1, 3, 20):
         state = PlaybackState([f"{n}.mp3" for n in range(count)])
-        clickable = draw_overlay(offscreen, state, None)
+        clickable, _ = draw_overlay(offscreen, state, None)
         button = clickable[CHANGE_TITLE_MODE]
         assert next_action(click(button.center), clickable) == CHANGE_TITLE_MODE
         # Below the playlist rows, not in the full top row
@@ -881,7 +884,8 @@ def test_title_button_fits_in_small_window_and_label_fits_at_full_size():
 def test_title_button_hides_with_the_panel(offscreen):
     state = PlaybackState(["a.mp3"])
     state.toggle_panel()
-    assert CHANGE_TITLE_MODE not in draw_overlay(offscreen, state, None)
+    buttons, rows = draw_overlay(offscreen, state, None)
+    assert CHANGE_TITLE_MODE not in buttons and rows == {}
 
 
 def record_title_modes(monkeypatch):
@@ -979,8 +983,7 @@ def test_single_song_play_shows_now_playing(tmp_path, headless_screen, monkeypat
 def test_title_button_and_rows_dont_overlap(offscreen):
     for count in (1, 3, 20):
         state = PlaybackState([f"{n}.mp3" for n in range(count)])
-        clickable = draw_overlay(offscreen, state, None)
-        rows = row_layout(offscreen.get_size(), state)
+        clickable, rows = draw_overlay(offscreen, state, None)
         button = clickable[CHANGE_TITLE_MODE]
         assert not any(button.colliderect(rect) for rect in rows.values())
         assert next_action(click(button.center), clickable, rows) == CHANGE_TITLE_MODE
@@ -1091,8 +1094,8 @@ def test_panel_rect_covers_the_drawn_panel(offscreen):
     for count in (1, 3, 20):
         state = long_state(count)
         area = panel_rect(offscreen.get_size(), state)
-        clickable = draw_overlay(offscreen, state, None)
-        for rect in list(clickable.values()) + list(row_layout(offscreen.get_size(), state).values()):
+        clickable, rows = draw_overlay(offscreen, state, None)
+        for rect in list(clickable.values()) + list(rows.values()):
             assert area.contains(rect.clip(area)) and rect.colliderect(area)
         assert area.bottom >= clickable[musicolorizer.CHANGE_TITLE_MODE].bottom
     hidden = long_state(3)
@@ -1178,3 +1181,63 @@ def test_window_follows_skips_in_a_real_playlist(monkeypatch):
     assert by_index[5] == (3, 11)           # playing song visible: window stays where scrolled
     assert by_index[10] == (3, 11)
     assert by_index[11] == visible_range(11, 20, MAX_ROWS)  # left the window: follows it again
+
+
+# ---------- draw_overlay returns the row rects (issue #49) ----------
+
+@pytest.mark.parametrize("count, index, scroll", [(3, 0, 0), (20, 5, 0), (20, 0, 7), (20, 19, -3)])
+def test_draw_overlay_returns_the_rows_it_drew(offscreen, monkeypatch, count, index, scroll):
+    state = long_state(count)
+    state.start(index)
+    if scroll:
+        state.scroll(scroll)
+    drawn = record_rows(monkeypatch)
+    buttons, rows = draw_overlay(offscreen, state, musicolorizer.load_fonts())
+    assert rows == row_layout(offscreen.get_size(), state)
+    start, end = panel_window(state)
+    assert sorted(rows) == list(range(start, end))  # just the visible window
+    # Each returned rect holds the row drawn for that song
+    song_rows = [(text, y) for text, y in drawn if not text.startswith("...")]
+    assert [rows[i].y for i in sorted(rows)] == [y for _, y in song_rows]
+    assert CHANGE_TITLE_MODE in buttons
+
+
+def test_draw_overlay_hidden_returns_chip_and_no_rows(offscreen):
+    state = long_state(20)
+    state.toggle_panel()
+    buttons, rows = draw_overlay(offscreen, state, None)
+    assert buttons == {TOGGLE_PANEL: chip_layout(offscreen.get_size())}
+    assert rows == {}
+
+
+def test_play_song_clicks_use_the_rows_draw_overlay_returned(tmp_path, headless_screen, monkeypatch):
+    # The rows play_song checks clicks against come from draw_overlay, not a separate row_layout call
+    song = make_tiny_wav(tmp_path / "One.wav", seconds=2)
+    state = PlaybackState([song, str(tmp_path / "Two.wav"), str(tmp_path / "Three.wav")])
+    monkeypatch.setattr(musicolorizer, "now_playing", state)
+    real_draw = musicolorizer.draw_overlay
+    spot = pygame.Rect(300, 250, 20, 20)  # somewhere row_layout would never put a row
+    monkeypatch.setattr(musicolorizer, "draw_overlay",
+                        lambda screen, st, fonts, pos=(-1, -1): (real_draw(screen, st, fonts, pos)[0], {2: spot}))
+    scripted_frames(monkeypatch, [[], [click(spot.center)]])
+    assert play_song(headless_screen, song) == (JUMP, 2)
+
+
+def test_click_on_a_row_reached_by_scrolling_jumps_to_it(tmp_path, headless_screen, monkeypatch):
+    songs = [make_tiny_wav(tmp_path / f"Song {n}.wav", seconds=2) for n in range(1, 13)]
+    state = PlaybackState(songs)
+    monkeypatch.setattr(musicolorizer, "now_playing", state)
+    # Scroll down 4 rows in the first frames, then click song 12, which only shows after scrolling
+    down = key(pygame.K_DOWN)
+    clicked = []
+
+    def click_last_row():
+        _, rows = draw_overlay(headless_screen, state, None)
+        clicked.append(max(rows))
+        return [click(rows[max(rows)].center)]
+
+    batches = iter([[down, down, down, down], [], None])
+    monkeypatch.setattr(pygame.event, "get",
+                        lambda *a, **k: (lambda b: click_last_row() if b is None else b)(next(batches, [])))
+    assert play_song(headless_screen, songs[0]) == (JUMP, 11)
+    assert clicked == [11]

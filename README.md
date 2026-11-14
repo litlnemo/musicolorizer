@@ -240,9 +240,9 @@ The `main` function controls the overall operation of the program. It gets the s
 While paused, the bars hold still and the music position stops too, so everything picks up in sync on resume.
 
 ### The playlist panel
-`draw_overlay` draws the panel: the header line (`panel_header`), the four buttons (laid out by `control_layout`), the playlist rows, and the Title button at the bottom (`title_mode_layout`). A long playlist shows 8 rows at a time (`panel_window`): it follows the current song until you scroll, and goes back to following it when the playing song moves out of view. When the panel is hidden it draws only the small "Show playlist (H)" button instead (`draw_chip`). Either way it returns the buttons that can be clicked right now.
+`draw_overlay` draws the panel: the header line (`panel_header`), the four buttons (laid out by `control_layout`), the playlist rows, and the Title button at the bottom (`title_mode_layout`). A long playlist shows 8 rows at a time (`panel_window`): it follows the current song until you scroll, and goes back to following it when the playing song moves out of view. When the panel is hidden it draws only the small "Show playlist (H)" button instead (`draw_chip`). Either way it returns what can be clicked right now: the buttons, and the playlist rows it just drew (none while the panel is hidden).
 
-Drawing and clicking share the same layout functions, so a click always lands on what's drawn: `play_song` gives `next_action` the song rows from `row_layout`, to tell which song was clicked, and the panel area from `panel_rect`, to tell whether the mouse wheel is over the panel.
+Drawing and clicking share the same layout functions, so a click always lands on what's drawn: `play_song` gives `next_action` the song rows that `draw_overlay` just drew, to tell which song was clicked, and the panel area from `panel_rect`, to tell whether the mouse wheel is over the panel.
 
 ## Examples
 **Keyword: "love"**
